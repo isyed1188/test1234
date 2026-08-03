@@ -1,8 +1,95 @@
 # JobHunt Coach
 
-A self-hosted job search companion: a **job application tracker**, **resume manager with local AI tailoring**, and **job discovery via public ATS APIs** (Greenhouse & Lever boards).
+A self-hosted job search companion: a **job application tracker**, **resume manager with local AI tailoring**, and **job discovery via public ATS APIs** (Greenhouse, Lever & Fortune 500 Workday boards).
 
 Built as a legitimate alternative to automated application bots — it helps you organize, tailor, and track your applications, while **you** do the actual applying.
+
+---
+
+## Quick start for non-technical users
+
+If you are not a programmer, follow these steps exactly. Each command is typed
+into a terminal (on Mac, open the "Terminal" app; on Windows, use PowerShell).
+
+### Step 1 - Install Node.js
+
+Go to https://nodejs.org and download the **LTS** version (v22 or newer).
+Run the installer and click through the defaults. After installing, open a
+terminal and type `node -v`. If you see a version number, you are ready.
+
+### Step 2 - Get this project on your computer
+
+This project lives on GitHub. You need a tool called **Git**:
+
+- Mac: type `xcode-select --install` in the terminal and follow the prompts.
+- Windows: install from https://git-scm.com and use the defaults.
+
+Then, in the terminal, go to the folder where you want the project and type:
+
+```bash
+git clone https://github.com/isyed1188/test1234
+cd test1234
+```
+
+(If you have the project as a downloaded ZIP, unzip it and use your terminal to
+`cd` into the extracted folder instead.)
+
+### Step 3 - Install the project's parts
+
+In the project folder, type these two commands one at a time and wait for each
+to finish before starting the next:
+
+```bash
+npm install
+npx vite build
+```
+
+`npm install` downloads the pieces the app needs. `npx vite build` creates the
+browser part of the app. You only do this once.
+
+### Step 4 - Start the app
+
+Type:
+
+```bash
+node backend/server.js
+```
+
+You will see text like "JobHunt Coach running on http://localhost:4000".
+
+### Step 5 - Open the app in your browser
+
+Open Chrome, Safari, or Edge and go to:
+
+```
+http://localhost:4000
+```
+
+That is it. You can now use JobHunt Coach.
+
+### Step 6 - First things to try (in the app)
+
+1. Go to the **Profile** tab and type your skills (for example `Python, AWS,
+   Kubernetes`), then save.
+2. Go to **Search & Import**, pick a source (Greenhouse / Lever / Fortune 500),
+   choose a company, and click **Import**. Wait for the job count to appear.
+3. Click any job to read it, then use **Save to apply** to add it to your
+   pipeline.
+4. Go to **Resume Manager**, upload your resume, and set it as the baseline.
+5. Go to **Applications** to update job statuses and export a CSV report.
+
+### How to stop the app
+
+Close the terminal window, or press `Ctrl` + `C` in it. To start again later,
+repeat Step 4.
+
+### When something looks wrong
+
+- If the browser tab does not open, make sure you typed
+  `http://localhost:4000` exactly and that the terminal from Step 4 is still
+  running.
+- If an import shows errors, most companies' free job feeds work, but a few
+  need a special code and are skipped automatically. Try a different company.
 
 ---
 
@@ -141,6 +228,9 @@ If the model is unreachable, tailoring returns a clear error and the rest of the
 ├── data/               — SQLite DB + tailored resumes (auto-created)
 ├── uploads/            — Uploaded resume files
 ├── public/             — Built UI assets
+├── docs/               — Project documentation (PROJECT_INFO.md)
+├── .agent/             — AI agent definitions for building/maintaining the project
+├── .skill/             — AI skill definitions (setup, build, run, verify, add-job-source)
 ├── vite.config.js
 ├── package.json
 └── start.sh
