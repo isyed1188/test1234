@@ -1,4 +1,5 @@
 import { getSetting } from './database.js';
+import { assertHttpUrl } from './validate.js';
 
 export function getLlamaConfig() {
   const mode = getSetting('llmMode', 'ollama');
@@ -18,6 +19,7 @@ export function getLlamaConfig() {
 
 export async function generate(prompt, timeoutMs = 90000) {
   const cfg = getLlamaConfig();
+  assertHttpUrl(cfg.host, 'LLM host');
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -61,6 +63,7 @@ export async function generate(prompt, timeoutMs = 90000) {
 export async function checkHealth() {
   const cfg = getLlamaConfig();
   try {
+    assertHttpUrl(cfg.host, 'LLM host');
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 5000);
     const url = cfg.mode === 'lmstudio'

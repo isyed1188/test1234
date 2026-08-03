@@ -10,15 +10,24 @@ import { importFrom, importAll, knownSources, startEnricher } from './scraper.js
 import { checkHealth } from './ollama.js';
 import { extractText, isSupported, tailorResume, applyTailoring } from './resumeEngine.js';
 import { sendDiscord, buildDigestMessage } from './notifier.js';
+import { assertDiscordWebhook, assertHttpUrl, assertSlug, clampText } from './validate.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 4000);
+const HOST = process.env.HOST || '127.0.0.1';
 const uploadsDir = path.join(__dirname, '..', 'uploads');
 const tailoredDir = path.join(__dirname, '..', 'data', 'tailored_resumes');
 fs.mkdirSync(uploadsDir, { recursive: true });
 fs.mkdirSync(tailoredDir, { recursive: true });
 
 const app = express();
+app.disable('x-powered-by');
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  next();
+});
 app.use(express.json({ limit: '5mb' }));
 
 const storage = multer.diskStorage({
@@ -29,6 +38,10 @@ const storage = multer.diskStorage({
   }
 });
 const upload = multer({ storage, limits: { fileSize: 15 * 1024 * 1024 } });
+
+const APPLICATION_STATUSES = new Set([
+  'PENDING', 'APPLIED', 'INTERVIEW', 'OFFER', 'REJECTED', 'ARCHIVED'
+]);
 
 function nowIso() {
   return new Date().toISOString();
@@ -135,7 +148,8 @@ app.post('/api/import', async (req, res) => {
   const { source, company, keyword } = req.body;
   if (!source || !company) return res.status(400).json({ error: 'source and company required' });
   try {
-    const count = await importFrom(source, company, keyword || '');
+    assertSlug(company, 'company');
+    const count = await importFrom(source, company, clampText(keyword, 200));
     log('info', `imported ${count} jobs from ${source}/${company}`);
     res.json({ imported: count });
   } catch (err) {
@@ -147,7 +161,7 @@ app.post('/api/import', async (req, res) => {
 app.post('/api/import/all', async (req, res) => {
   const { keyword } = req.body || {};
   try {
-    const results = await importAll(null, keyword || '');
+    const results = await importAll(null, clampText(keyword, 200));
     res.json(results);
   } catch (err) {
     log('error', `import all failed: ${err.message}`);
@@ -182,10 +196,14 @@ app.post('/api/applications', (req, res) => {
   const job = get('SELECT id FROM jobs WHERE id = ?', [job_id]);
   if (!job) return res.status(404).json({ error: 'Job not found' });
   const st = status || 'PENDING';
+  if (!APPLICATION_STATUSES.has(st)) {
+    return res.status(400).json({ error: `status must be one of ${[...APPLICATION_STATUSES].join(', ')}` });
+  }
   const result = run(
     `INSERT INTO applications (job_id, status, portal, resume_id, notes, applied_at, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [job_id, st, portal || null, resume_id || null, notes || null,
+    [job_id, st, portal ? clampText(portal, 200) : null, resume_id || null,
+     notes ? clampText(notes, 5000) : null,
      st === 'PENDING' ? null : nowIso(), nowIso()]
   );
   log('info', `application #${result.lastInsertRowid} created for job ${job_id} status=${st}`);
@@ -198,6 +216,9 @@ app.patch('/api/applications/:id', (req, res) => {
   const updates = [];
   const params = [];
   if (req.body.status !== undefined) {
+    if (!APPLICATION_STATUSES.has(String(req.body.status))) {
+      return res.status(400).json({ error: `status must be one of ${[...APPLICATION_STATUSES].join(', ')}` });
+    }
     updates.push('status = ?');
     params.push(String(req.body.status));
     if (req.body.status !== 'PENDING' && !existing.applied_at) {
@@ -207,11 +228,11 @@ app.patch('/api/applications/:id', (req, res) => {
   }
   if (req.body.notes !== undefined) {
     updates.push('notes = ?');
-    params.push(String(req.body.notes));
+    params.push(clampText(req.body.notes, 5000));
   }
   if (req.body.portal !== undefined) {
     updates.push('portal = ?');
-    params.push(String(req.body.portal));
+    params.push(clampText(req.body.portal, 200));
   }
   if (!updates.length) return res.status(400).json({ error: 'Nothing to update' });
   params.push(req.params.id);
@@ -220,7 +241,8 @@ app.patch('/api/applications/:id', (req, res) => {
 });
 
 function csvEscape(value) {
-  const s = value === null || value === undefined ? '' : String(value);
+  let s = value === null || value === undefined ? '' : String(value);
+  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
   if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
   return s;
 }
@@ -268,6 +290,8 @@ app.post('/api/resumes/upload', upload.single('file'), async (req, res) => {
 });
 
 app.post('/api/resumes/:id/baseline', (req, res) => {
+  const resume = get('SELECT id FROM resumes WHERE id = ?', [req.params.id]);
+  if (!resume) return res.status(404).json({ error: 'Resume not found' });
   run('UPDATE resumes SET is_baseline = 0');
   run('UPDATE resumes SET is_baseline = 1 WHERE id = ?', [req.params.id]);
   res.json(get('SELECT * FROM resumes WHERE id = ?', [req.params.id]));
@@ -309,15 +333,15 @@ app.get('/api/profile', (req, res) => {
 app.put('/api/profile', (req, res) => {
   const { name, email, phone, location, headline, skills, url, salary_target, cover_letter } = req.body || {};
   const profile = {
-    name: name || '',
-    email: email || '',
-    phone: phone || '',
-    location: location || '',
-    headline: headline || '',
-    skills: Array.isArray(skills) ? skills : [],
-    url: url || '',
-    salary_target: salary_target || '',
-    cover_letter: cover_letter || ''
+    name: clampText(name, 200),
+    email: clampText(email, 320),
+    phone: clampText(phone, 50),
+    location: clampText(location, 200),
+    headline: clampText(headline, 500),
+    skills: Array.isArray(skills) ? skills.slice(0, 200).map((s) => clampText(s, 100)) : [],
+    url: clampText(url, 2000),
+    salary_target: clampText(salary_target, 100),
+    cover_letter: clampText(cover_letter, 20000)
   };
   setSetting('profile', profile);
   log('info', 'profile updated');
@@ -325,17 +349,36 @@ app.put('/api/profile', (req, res) => {
 });
 
 app.get('/api/settings', (req, res) => {
-  const keys = ['llmMode', 'llmHost', 'llmModel', 'discordWebhook'];
   const out = {};
-  for (const k of keys) out[k] = getSetting(k, '');
+  for (const k of ['llmMode', 'llmHost', 'llmModel']) out[k] = getSetting(k, '');
+  out.discordWebhookSet = Boolean(getSetting('discordWebhook', ''));
   out.profile = getSetting('profile', {});
   res.json(out);
 });
 
 app.put('/api/settings', (req, res) => {
-  const keys = ['llmMode', 'llmHost', 'llmModel', 'discordWebhook'];
-  for (const k of keys) {
-    if (req.body[k] !== undefined) setSetting(k, String(req.body[k]));
+  try {
+    if (req.body.llmMode !== undefined) {
+      const mode = String(req.body.llmMode);
+      if (mode !== 'ollama' && mode !== 'lmstudio') {
+        return res.status(400).json({ error: 'llmMode must be ollama or lmstudio' });
+      }
+      setSetting('llmMode', mode);
+    }
+    if (req.body.llmHost !== undefined) {
+      const host = String(req.body.llmHost);
+      if (host) assertHttpUrl(host, 'LLM host');
+      setSetting('llmHost', host);
+    }
+    if (req.body.llmModel !== undefined) {
+      setSetting('llmModel', clampText(req.body.llmModel, 200));
+    }
+    if (req.body.discordWebhook !== undefined) {
+      const webhook = String(req.body.discordWebhook);
+      setSetting('discordWebhook', webhook ? assertDiscordWebhook(webhook) : '');
+    }
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
   }
   res.json({ ok: true });
 });
@@ -381,9 +424,9 @@ app.use((req, res) => {
   res.status(404).json({ error: 'Not found' });
 });
 
-app.listen(PORT, () => {
-  log('info', `server listening on http://localhost:${PORT}`);
-  console.log(`JobHunt Coach running at http://localhost:${PORT}`);
+app.listen(PORT, HOST, () => {
+  log('info', `server listening on http://${HOST}:${PORT}`);
+  console.log(`JobHunt Coach running at http://${HOST}:${PORT}`);
 });
 
 startEnricher();

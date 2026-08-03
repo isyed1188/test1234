@@ -1,4 +1,5 @@
 import { get, all, run, log } from './database.js';
+import { assertSlug } from './validate.js';
 
 const GREENHOUSE_SOURCES = [
   'gitlab', 'datadog', 'coinbase', 'reddit', 'dropbox',
@@ -153,7 +154,8 @@ function loadProfile() {
 }
 
 async function importGreenhouse(company, keyword, profile) {
-  const data = await fetchJson(`https://boards-api.greenhouse.io/v1/boards/${company}/jobs`);
+  assertSlug(company, 'Greenhouse board');
+  const data = await fetchJson(`https://boards-api.greenhouse.io/v1/boards/${encodeURIComponent(company)}/jobs`);
   const jobs = data.jobs || [];
   let count = 0;
   for (const j of jobs) {
@@ -183,7 +185,8 @@ async function importGreenhouse(company, keyword, profile) {
 }
 
 async function importLever(company, keyword, profile) {
-  const data = await fetchJson(`https://api.lever.co/v0/postings/${company}?mode=json`, 90000);
+  assertSlug(company, 'Lever board');
+  const data = await fetchJson(`https://api.lever.co/v0/postings/${encodeURIComponent(company)}?mode=json`, 90000);
   const jobs = Array.isArray(data) ? data : [];
   let count = 0;
   for (const j of jobs) {
@@ -316,7 +319,10 @@ async function enrichGreenhouseJob(row) {
   const company = m[1];
   const jobId = m[2];
   try {
-    const data = await fetchJson(`https://boards-api.greenhouse.io/v1/boards/${company}/jobs/${jobId}`);
+    assertSlug(company, 'Greenhouse board');
+    const data = await fetchJson(
+      `https://boards-api.greenhouse.io/v1/boards/${encodeURIComponent(company)}/jobs/${encodeURIComponent(jobId)}`
+    );
     const title = data.title || row.title || '';
     const content = stripHtml(data.content);
     const location = data.location?.name || row.location || '';
@@ -360,6 +366,7 @@ async function enrichWorkdayJob(row) {
   const cfg = WORKDAY_SOURCES.find((c) => c.slug === m[1]);
   if (!cfg) return false;
   try {
+    if (new URL(row.url).hostname !== cfg.domain) return false;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 20000);
     const res = await fetch(row.url, {

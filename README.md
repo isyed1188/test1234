@@ -243,6 +243,7 @@ If the model is unreachable, tailoring returns a clear error and the rest of the
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `PORT` | `4000` | HTTP port |
+| `HOST` | `127.0.0.1` | Bind address. The API has no authentication, so only change this if you intentionally expose the app and add your own auth in front of it. |
 | `OLLAMA_HOST` | — | Fallback hint; LLM host is set in the UI |
 | `OLLAMA_MODEL` | — | Fallback hint; model is set in the UI |
 
