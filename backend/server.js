@@ -63,7 +63,7 @@ app.get('/api/stats', (req, res) => {
 
 class BadRequest extends Error {}
 
-const APPLICATION_STATUSES = ['PENDING', 'APPLIED', 'INTERVIEWING', 'OFFER', 'REJECTED', 'WITHDRAWN'];
+const APPLICATION_STATUSES = ['PENDING', 'APPLIED', 'INTERVIEW', 'OFFER', 'REJECTED', 'ARCHIVED'];
 
 function escapeLike(value) {
   return value.replace(/[\\%_]/g, (c) => `\\${c}`);
