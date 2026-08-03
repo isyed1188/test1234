@@ -137,6 +137,12 @@ describe('applyTailoring', () => {
     expect(out).toContain('# Skills\n\njs');
   });
 
+  it('appends skills alongside a prepended summary', () => {
+    const out = applyTailoring('# Experience\n\nAcme', 'new summary', 'js, node');
+    expect(out).toContain('# Professional Summary\n\nnew summary');
+    expect(out).toContain('# Skills\n\njs, node');
+  });
+
   it('returns the trimmed content unchanged when nothing is provided', () => {
     expect(applyTailoring('  body  ', '', '')).toBe('body');
   });

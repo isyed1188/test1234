@@ -4,11 +4,14 @@
   "private": true,
   "type": "module",
   "description": "Job hunt tracker, resume manager and open-API job discovery",
+  "engines": {
+    "node": ">=22.9"
+  },
   "scripts": {
-    "start": "node backend/server.js",
+    "start": "node --experimental-sqlite --env-file-if-exists=.env backend/server.js",
     "build": "vite build",
     "dev:frontend": "vite",
-    "dev": "node backend/server.js",
+    "dev": "npm start",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"
@@ -17,6 +20,7 @@
     "express": "^4.21.2",
     "lucide-react": "^0.469.0",
     "mammoth": "^1.8.0",
+    "multer": "^2.0.1",
     "multer": "^2.2.0",
     "pdf-parse": "^1.1.1",
     "react": "^18.3.1",

@@ -17,6 +17,10 @@ vi.mock('../backend/database.js', () => ({
     return undefined;
   },
   all: () => state.applied,
+  getSetting: (key, fallback = null) => {
+    if (key === 'discordWebhook') return state.webhook ? JSON.parse(state.webhook.value) : fallback;
+    return fallback;
+  },
   log: (level, message) => logCalls.push([level, message])
 }));
 

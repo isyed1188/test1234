@@ -106,22 +106,40 @@ app.get('/api/stats', route((req, res) => {
   });
 }));
 
+class BadRequest extends Error {}
+
+const APPLICATION_STATUSES = ['PENDING', 'APPLIED', 'INTERVIEW', 'OFFER', 'REJECTED', 'ARCHIVED'];
+
+function escapeLike(value) {
+  return value.replace(/[\\%_]/g, (c) => `\\${c}`);
+}
+
 function buildJobFilter(req) {
   const { q, work_mode, experience_level, source, min_relevance, salary_bucket, status } = req.query;
   const where = [];
   const params = [];
   if (q) {
-    where.push('(title LIKE ? OR company LIKE ? OR description LIKE ? OR skills LIKE ?)');
-    const like = `%${q}%`;
+    where.push(
+      `(title LIKE ? ESCAPE '\\' OR company LIKE ? ESCAPE '\\'
+        OR description LIKE ? ESCAPE '\\' OR skills LIKE ? ESCAPE '\\')`
+    );
+    const like = `%${escapeLike(String(q))}%`;
     params.push(like, like, like, like);
   }
   if (work_mode) { where.push('work_mode = ?'); params.push(work_mode); }
   if (experience_level) { where.push('experience_level = ?'); params.push(experience_level); }
   if (source) { where.push('source = ?'); params.push(source); }
-  if (min_relevance) { where.push('relevance_score >= ?'); params.push(Number(min_relevance)); }
+  if (min_relevance !== undefined && min_relevance !== '') {
+    const value = Number(min_relevance);
+    if (!Number.isFinite(value)) throw new BadRequest('min_relevance must be a number');
+    where.push('relevance_score >= ?');
+    params.push(value);
+  }
   if (salary_bucket) {
+    const value = Number(salary_bucket);
+    if (!Number.isFinite(value)) throw new BadRequest('salary_bucket must be a number');
     where.push('(salary_max IS NOT NULL AND salary_max >= ?)');
-    params.push(Number(salary_bucket));
+    params.push(value);
   }
   if (status === 'applied') {
     where.push("EXISTS (SELECT 1 FROM applications a WHERE a.job_id = jobs.id AND a.status != 'PENDING')");
@@ -132,6 +150,15 @@ function buildJobFilter(req) {
   return { where, params };
 }
 
+app.get('/api/jobs', (req, res) => {
+  let filter;
+  try {
+    filter = buildJobFilter(req);
+  } catch (err) {
+    if (err instanceof BadRequest) return res.status(400).json({ error: err.message });
+    throw err;
+  }
+  const { where, params } = filter;
 app.get('/api/jobs', route((req, res) => {
   const { where, params } = buildJobFilter(req);
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
@@ -236,6 +263,8 @@ app.post('/api/applications', route((req, res) => {
     throw httpError(404, 'Resume not found');
   }
   const st = status || 'PENDING';
+  if (!APPLICATION_STATUSES.includes(st)) {
+    return res.status(400).json({ error: `status must be one of ${APPLICATION_STATUSES.join(', ')}` });
   if (!APPLICATION_STATUSES.has(st)) {
     throw httpError(400, `status must be one of ${[...APPLICATION_STATUSES].join(', ')}`);
   }
@@ -256,6 +285,9 @@ app.patch('/api/applications/:id', route((req, res) => {
   const body = req.body || {};
   const updates = [];
   const params = [];
+  if (req.body.status !== undefined) {
+    if (!APPLICATION_STATUSES.includes(String(req.body.status))) {
+      return res.status(400).json({ error: `status must be one of ${APPLICATION_STATUSES.join(', ')}` });
   if (body.status !== undefined) {
     if (!APPLICATION_STATUSES.has(String(body.status))) {
       throw httpError(400, `status must be one of ${[...APPLICATION_STATUSES].join(', ')}`);
@@ -288,6 +320,27 @@ function csvEscape(value) {
   return s;
 }
 
+const EXPORT_COLUMNS = [
+  ['Job ID', 'id'],
+  ['Title', 'title'],
+  ['Company', 'company'],
+  ['Category', 'category'],
+  ['Location', 'location'],
+  ['Work Mode', 'work_mode'],
+  ['Experience Level', 'experience_level'],
+  ['Salary Min', 'salary_min'],
+  ['Salary Max', 'salary_max'],
+  ['Currency', 'salary_currency'],
+  ['URL', 'url'],
+  ['Source', 'source'],
+  ['Status', 'status'],
+  ['Portal', 'portal'],
+  ['Applied At', 'applied_at'],
+  ['Notes', 'notes'],
+  ['Resume Filename', 'resume_filename']
+];
+
+app.get('/api/applications/export', (req, res) => {
 app.get('/api/applications/export', route((req, res) => {
   const rows = all(
     `SELECT j.id, j.title, j.company, j.category, j.location, j.work_mode, j.experience_level,
@@ -298,10 +351,9 @@ app.get('/api/applications/export', route((req, res) => {
      LEFT JOIN resumes r ON r.id = a.resume_id
      ORDER BY a.id DESC`
   );
-  const headers = ['Job ID', 'Title', 'Company', 'Category', 'Location', 'Work Mode', 'Experience Level', 'Salary Min', 'Salary Max', 'Currency', 'URL', 'Source', 'Status', 'Portal', 'Applied At', 'Notes', 'Resume Filename'];
-  const lines = [headers.map(csvEscape).join(',')];
+  const lines = [EXPORT_COLUMNS.map(([header]) => csvEscape(header)).join(',')];
   for (const r of rows) {
-    lines.push(headers.map((h) => csvEscape(r[Object.keys(r)[headers.indexOf(h)]])).join(','));
+    lines.push(EXPORT_COLUMNS.map(([, key]) => csvEscape(r[key])).join(','));
   }
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', 'attachment; filename="applications.csv"');
@@ -351,6 +403,18 @@ app.post('/api/resumes/upload', uploadSingle('file'), route(async (req, res) => 
   res.json(get('SELECT * FROM resumes WHERE id = ?', [result.lastInsertRowid]));
 }));
 
+app.post('/api/resumes/:id/baseline', (req, res) => {
+  const resume = get('SELECT id FROM resumes WHERE id = ?', [req.params.id]);
+  if (!resume) return res.status(404).json({ error: 'Resume not found' });
+  run('BEGIN');
+  try {
+    run('UPDATE resumes SET is_baseline = 0');
+    run('UPDATE resumes SET is_baseline = 1 WHERE id = ?', [req.params.id]);
+    run('COMMIT');
+  } catch (err) {
+    run('ROLLBACK');
+    throw err;
+  }
 app.post('/api/resumes/:id/baseline', route((req, res) => {
   const resume = get('SELECT id FROM resumes WHERE id = ?', [req.params.id]);
   if (!resume) throw httpError(404, 'Resume not found');
@@ -419,6 +483,25 @@ app.get('/api/settings', route((req, res) => {
   res.json(out);
 }));
 
+function isDiscordWebhook(value) {
+  if (!value) return true;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:'
+      && ['discord.com', 'discordapp.com', 'ptb.discord.com', 'canary.discord.com'].includes(url.hostname)
+      && url.pathname.startsWith('/api/webhooks/');
+  } catch {
+    return false;
+  }
+}
+
+app.put('/api/settings', (req, res) => {
+  const keys = ['llmMode', 'llmHost', 'llmModel', 'discordWebhook'];
+  if (req.body.discordWebhook !== undefined && !isDiscordWebhook(String(req.body.discordWebhook))) {
+    return res.status(400).json({ error: 'discordWebhook must be an https://discord.com/api/webhooks/... URL' });
+  }
+  for (const k of keys) {
+    if (req.body[k] !== undefined) setSetting(k, String(req.body[k]));
 app.put('/api/settings', route((req, res) => {
   const body = req.body || {};
   try {
@@ -492,6 +575,9 @@ app.use((req, res) => {
   res.status(404).json({ error: 'Not found' });
 });
 
+app.listen(PORT, HOST, () => {
+  log('info', `server listening on http://${HOST}:${PORT}`);
+  console.log(`JobHunt Coach running at http://${HOST}:${PORT}`);
 app.use((err, req, res, next) => {
   const status = err.status || err.statusCode || 500;
   // Deliberate failures are already logged where they are raised; anything

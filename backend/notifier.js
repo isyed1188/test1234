@@ -20,7 +20,7 @@ function buildDigest() {
   const stats = get(
     `SELECT
        COUNT(*) AS total_jobs,
-       SUM(CASE WHEN (SELECT COUNT(*) FROM applications a WHERE a.job_id = jobs.id) > 0 THEN 1 ELSE 0 END) AS applied_jobs
+       SUM(CASE WHEN EXISTS (SELECT 1 FROM applications a WHERE a.job_id = jobs.id AND a.status != 'PENDING') THEN 1 ELSE 0 END) AS applied_jobs
      FROM jobs`
   );
   const applied = all(

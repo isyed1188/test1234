@@ -26,8 +26,8 @@ describe('getLlamaConfig', () => {
   it('defaults to ollama', () => {
     expect(getLlamaConfig()).toEqual({
       mode: 'ollama',
-      host: 'http://192.168.1.152:11434',
-      model: 'gemma4:latest'
+      host: 'http://localhost:11434',
+      model: 'llama3.1:latest'
     });
   });
 
@@ -87,7 +87,7 @@ describe('checkHealth', () => {
   it('probes the ollama tags endpoint', async () => {
     const fetchMock = stubFetch(async () => ({ ok: true, status: 200 }));
     const health = await checkHealth();
-    expect(fetchMock.mock.calls[0][0]).toBe('http://192.168.1.152:11434/api/tags');
+    expect(fetchMock.mock.calls[0][0]).toBe('http://localhost:11434/api/tags');
     expect(health).toMatchObject({ ok: true, status: 200 });
     expect(health.config.mode).toBe('ollama');
   });

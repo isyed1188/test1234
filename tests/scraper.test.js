@@ -22,6 +22,15 @@ vi.mock('../backend/database.js', () => ({
     }
   },
   all: () => db.rows,
+  getSetting: (key, fallback = null) => {
+    if (key !== 'profile') return fallback;
+    if (!db.profileRow) return fallback;
+    try {
+      return JSON.parse(db.profileRow.value);
+    } catch {
+      return fallback;
+    }
+  },
   run: (sql, params = []) => {
     db.runCalls.push({ sql, params });
     if (db.runError) throw db.runError;
@@ -30,9 +39,10 @@ vi.mock('../backend/database.js', () => ({
   log: () => {}
 }));
 
-const { detectWorkMode, detectExperience, importFrom, importAll, knownSources } = await import(
-  '../backend/scraper.js'
-);
+const {
+  detectWorkMode, detectExperience, parseSalary, relevanceScore,
+  importFrom, importAll, knownSources
+} = await import('../backend/scraper.js');
 
 beforeEach(() => {
   db.profileRow = null;
@@ -91,6 +101,37 @@ describe('detectWorkMode', () => {
 
   it('prefers remote over hybrid when both appear', () => {
     expect(detectWorkMode('Engineer', 'Hybrid', 'remote friendly')).toBe('Remote');
+  });
+
+  it('does not treat negated remote wording as remote', () => {
+    expect(detectWorkMode('Engineer', 'Austin, TX', 'This role is not remote.')).toBe('Onsite');
+    expect(detectWorkMode('Engineer', 'Austin, TX', 'No remote option available.')).toBe('Onsite');
+    expect(detectWorkMode('Engineer', 'Austin, TX', 'Onsite only, remote is not offered.')).toBe('Onsite');
+  });
+});
+
+describe('parseSalary', () => {
+  it('reads explicit ranges and k-suffixed figures', () => {
+    expect(parseSalary('Base pay $120,000 - $150,000 per year')).toEqual({ min: 120000, max: 150000 });
+    expect(parseSalary('Compensation: $180k')).toEqual({ min: 180000, max: 180000 });
+  });
+
+  it('rejects numbers that cannot be salaries', () => {
+    expect(parseSalary('Founded 2020-2024, req id 118-220')).toBe(null);
+    expect(parseSalary('')).toBe(null);
+    expect(parseSalary(null)).toBe(null);
+  });
+});
+
+describe('relevanceScore', () => {
+  it('matches whole skill tokens only', () => {
+    const profile = { skills: ['Go', 'SQL'] };
+    expect(relevanceScore(profile, 'Backend Engineer', 'We use Go and SQL daily.')).toBe(100);
+    expect(relevanceScore(profile, 'Backend Engineer', 'We use Google Cloud and SQLite.')).toBe(0);
+  });
+
+  it('scores zero without profile skills', () => {
+    expect(relevanceScore({ skills: [] }, 'Anything', 'Anything')).toBe(0);
   });
 });
 
