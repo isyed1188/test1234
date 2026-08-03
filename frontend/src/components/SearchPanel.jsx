@@ -24,7 +24,7 @@ export default function SearchPanel() {
   const [lastImport, setLastImport] = useState(null);
 
   useEffect(() => {
-    api('/api/sources').then(setSources).catch(() => {});
+    api('/api/sources').then(setSources).catch((e) => setError(`Could not load job board list: ${e.message}`));
     loadJobs();
   }, []);
 

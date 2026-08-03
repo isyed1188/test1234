@@ -1,4 +1,5 @@
 import { get, all, run, log } from './database.js';
+import { describeFetchError, responseError } from './httpClient.js';
 
 const GREENHOUSE_SOURCES = [
   'gitlab', 'datadog', 'coinbase', 'reddit', 'dropbox',
@@ -89,8 +90,10 @@ async function fetchJson(url, timeoutMs = 20000) {
       signal: controller.signal,
       headers: { 'User-Agent': 'JobHuntCoach/1.0' }
     });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) throw await responseError(res, url);
     return await res.json();
+  } catch (err) {
+    throw describeFetchError(err, url, timeoutMs);
   } finally {
     clearTimeout(timer);
   }
@@ -106,8 +109,10 @@ async function postJson(url, body, timeoutMs = 60000) {
       headers: { 'Content-Type': 'application/json', 'User-Agent': 'JobHuntCoach/1.0' },
       body: JSON.stringify(body)
     });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) throw await responseError(res, url);
     return await res.json();
+  } catch (err) {
+    throw describeFetchError(err, url, timeoutMs);
   } finally {
     clearTimeout(timer);
   }
@@ -147,7 +152,8 @@ function loadProfile() {
   if (!row) return {};
   try {
     return JSON.parse(row.value);
-  } catch {
+  } catch (err) {
+    log('error', `stored profile is not valid JSON, scoring without it: ${err.message}`);
     return {};
   }
 }
@@ -282,6 +288,7 @@ export async function importAll(sources, keyword) {
       const n = await importGreenhouse(company, keyword, profile);
       results.greenhouse[company] = n;
     } catch (err) {
+      log('error', `import greenhouse/${company} failed: ${err.message}`);
       results.greenhouse[company] = `error: ${err.message}`;
     }
   }
@@ -290,6 +297,7 @@ export async function importAll(sources, keyword) {
       const n = await importLever(company, keyword, profile);
       results.lever[company] = n;
     } catch (err) {
+      log('error', `import lever/${company} failed: ${err.message}`);
       results.lever[company] = `error: ${err.message}`;
     }
   }
@@ -297,12 +305,14 @@ export async function importAll(sources, keyword) {
     try {
       const cfg = WORKDAY_SOURCES.find((c) => c.slug === company);
       if (!cfg) {
+        log('error', `import workday/${company} skipped: unknown board`);
         results.workday[company] = 'error: unknown board';
         continue;
       }
       const n = await importWorkday(cfg, keyword, profile);
       results.workday[company] = n;
     } catch (err) {
+      log('error', `import workday/${company} failed: ${err.message}`);
       results.workday[company] = `error: ${err.message}`;
     }
   }
@@ -312,7 +322,10 @@ export async function importAll(sources, keyword) {
 
 async function enrichGreenhouseJob(row) {
   const m = row.external_id.match(/^gh-(.+)-(\d+)$/);
-  if (!m) return false;
+  if (!m) {
+    log('error', `enrich skipped, unparseable external_id ${row.external_id}`);
+    return false;
+  }
   const company = m[1];
   const jobId = m[2];
   try {
@@ -339,38 +352,55 @@ async function enrichGreenhouseJob(row) {
     );
     return true;
   } catch (err) {
+    log('error', `enrich greenhouse ${row.external_id} failed: ${err.message}`);
+    // Bump fetched_at so the retry loop rotates on to other rows.
     run('UPDATE jobs SET fetched_at = ? WHERE id = ?', [new Date().toISOString(), row.id]);
     return false;
   }
 }
 
-function extractLdJson(html) {
+function extractLdJson(html, sourceUrl) {
   const m = html.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/);
   if (!m) return null;
   try {
     return JSON.parse(m[1].replace(/&amp;/g, '&'));
-  } catch {
+  } catch (err) {
+    log('error', `invalid ld+json on ${sourceUrl}: ${err.message}`);
     return null;
   }
 }
 
 async function enrichWorkdayJob(row) {
   const m = row.external_id.match(/^wd-([^-]+)-(.+)$/);
-  if (!m) return false;
+  if (!m) {
+    log('error', `enrich skipped, unparseable external_id ${row.external_id}`);
+    return false;
+  }
   const cfg = WORKDAY_SOURCES.find((c) => c.slug === m[1]);
-  if (!cfg) return false;
+  if (!cfg) {
+    log('error', `enrich skipped, unknown Workday board "${m[1]}" for ${row.external_id}`);
+    return false;
+  }
+  const timeoutMs = 20000;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 20000);
-    const res = await fetch(row.url, {
-      signal: controller.signal,
-      headers: { 'User-Agent': 'Mozilla/5.0' }
-    });
-    clearTimeout(timer);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    let res;
+    try {
+      res = await fetch(row.url, {
+        signal: controller.signal,
+        headers: { 'User-Agent': 'Mozilla/5.0' }
+      });
+    } catch (err) {
+      throw describeFetchError(err, row.url, timeoutMs);
+    }
+    if (!res.ok) throw await responseError(res, row.url);
     const html = await res.text();
-    const data = extractLdJson(html);
-    if (!data || !data.description) return false;
+    const data = extractLdJson(html, row.url);
+    if (!data || !data.description) {
+      log('info', `enrich workday ${row.external_id}: no job description in page markup`);
+      return false;
+    }
     const content = stripHtml(data.description);
     const title = data.title || row.title || '';
     const location = data.jobLocation?.address?.addressLocality || row.location || '';
@@ -392,7 +422,10 @@ async function enrichWorkdayJob(row) {
     );
     return true;
   } catch (err) {
+    log('error', `enrich workday ${row.external_id} failed: ${err.message}`);
     return false;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -427,10 +460,11 @@ async function enrichOnce() {
 }
 
 export function startEnricher() {
-  setInterval(() => {
-    enrichOnce().catch(() => {});
-  }, 4000);
-  setTimeout(() => enrichOnce().catch(() => {}), 1000);
+  const tick = () => enrichOnce().catch((err) => {
+    log('error', `enricher tick failed: ${err.stack || err.message}`);
+  });
+  setInterval(tick, 4000);
+  setTimeout(tick, 1000);
   log('info', 'background job description enricher started');
 }
 

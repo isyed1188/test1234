@@ -3,6 +3,7 @@ import path from 'node:path';
 import pdf from 'pdf-parse';
 import mammoth from 'mammoth';
 import { generate, extractJson } from './ollama.js';
+import { log } from './database.js';
 
 export function formatOf(filename) {
   const ext = path.extname(filename).toLowerCase();
@@ -28,7 +29,8 @@ export async function extractText(filePath, filename) {
     try {
       const data = await pdf(buffer);
       return (data.text || '').trim();
-    } catch {
+    } catch (err) {
+      log('error', `PDF parse failed for ${filename} (${err.message}), falling back to raw text scan`);
       return bestEffortText(buffer);
     }
   }
@@ -37,7 +39,8 @@ export async function extractText(filePath, filename) {
     try {
       const result = await mammoth.extractRawText({ buffer });
       return (result.value || '').trim();
-    } catch {
+    } catch (err) {
+      log('error', `DOCX parse failed for ${filename} (${err.message}), falling back to raw text scan`);
       return bestEffortText(buffer);
     }
   }
@@ -77,7 +80,9 @@ export async function tailorResume(content, job) {
 
   const raw = await generate(prompt);
   const parsed = extractJson(raw);
-  if (!parsed) throw new Error('Could not parse AI response into JSON');
+  if (parsed instanceof Error) {
+    throw new Error(`AI response could not be used: ${parsed.message}`);
+  }
   const summary = String(parsed.summary || '').trim();
   const skills = String(parsed.skills || '').trim();
   if (!summary && !skills) throw new Error('AI returned empty tailoring result');
