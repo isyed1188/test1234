@@ -1,4 +1,5 @@
-import { get, all, run, log } from './database.js';
+import { all, run, log, getSetting } from './database.js';
+import { fetchWithTimeout, fetchJson, postJson } from './http.js';
 
 const GREENHOUSE_SOURCES = [
   'gitlab', 'datadog', 'coinbase', 'reddit', 'dropbox',
@@ -81,38 +82,6 @@ function relevanceScore(profile, title, content) {
   return Math.min(100, Math.round((hits / skills.length) * 100));
 }
 
-async function fetchJson(url, timeoutMs = 20000) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const res = await fetch(url, {
-      signal: controller.signal,
-      headers: { 'User-Agent': 'JobHuntCoach/1.0' }
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return await res.json();
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-async function postJson(url, body, timeoutMs = 60000) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const res = await fetch(url, {
-      method: 'POST',
-      signal: controller.signal,
-      headers: { 'Content-Type': 'application/json', 'User-Agent': 'JobHuntCoach/1.0' },
-      body: JSON.stringify(body)
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return await res.json();
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 function saveJob(job) {
   try {
     const result = run(
@@ -143,13 +112,7 @@ function saveJob(job) {
 }
 
 function loadProfile() {
-  const row = get('SELECT value FROM settings WHERE key = ?', ['profile']);
-  if (!row) return {};
-  try {
-    return JSON.parse(row.value);
-  } catch {
-    return {};
-  }
+  return getSetting('profile', {});
 }
 
 async function importGreenhouse(company, keyword, profile) {
@@ -310,6 +273,26 @@ export async function importAll(sources, keyword) {
   return results;
 }
 
+function applyEnrichment(row, { title, content, location, url }) {
+  const salary = parseSalary(content);
+  const fields = {
+    description: content.slice(0, 20000),
+    location,
+    work_mode: detectWorkMode(title, location, content),
+    experience_level: detectExperience(title, content),
+    salary_min: salary?.min ?? null,
+    salary_max: salary?.max ?? null,
+    salary_currency: 'USD',
+    relevance_score: relevanceScore(loadProfile(), title, content)
+  };
+  if (url !== undefined) fields.url = url;
+  const cols = Object.keys(fields);
+  run(
+    `UPDATE jobs SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE id = ?`,
+    [...cols.map((c) => fields[c]), row.id]
+  );
+}
+
 async function enrichGreenhouseJob(row) {
   const m = row.external_id.match(/^gh-(.+)-(\d+)$/);
   if (!m) return false;
@@ -320,23 +303,12 @@ async function enrichGreenhouseJob(row) {
     const title = data.title || row.title || '';
     const content = stripHtml(data.content);
     const location = data.location?.name || row.location || '';
-    const salary = parseSalary(content);
-    const profile = loadProfile();
-    run(
-      `UPDATE jobs SET
-        description = ?, location = ?, work_mode = ?, experience_level = ?,
-        salary_min = ?, salary_max = ?, salary_currency = ?, url = ?, relevance_score = ?
-       WHERE id = ?`,
-      [
-        content.slice(0, 20000), location,
-        detectWorkMode(title, location, content),
-        detectExperience(title, content),
-        salary?.min ?? null, salary?.max ?? null, 'USD',
-        data.absolute_url || row.url || '',
-        relevanceScore(profile, title, content),
-        row.id
-      ]
-    );
+    applyEnrichment(row, {
+      title,
+      content,
+      location,
+      url: data.absolute_url || row.url || ''
+    });
     return true;
   } catch (err) {
     run('UPDATE jobs SET fetched_at = ? WHERE id = ?', [new Date().toISOString(), row.id]);
@@ -360,13 +332,10 @@ async function enrichWorkdayJob(row) {
   const cfg = WORKDAY_SOURCES.find((c) => c.slug === m[1]);
   if (!cfg) return false;
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 20000);
-    const res = await fetch(row.url, {
-      signal: controller.signal,
+    const res = await fetchWithTimeout(row.url, {
+      timeoutMs: 20000,
       headers: { 'User-Agent': 'Mozilla/5.0' }
     });
-    clearTimeout(timer);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const html = await res.text();
     const data = extractLdJson(html);
@@ -374,22 +343,7 @@ async function enrichWorkdayJob(row) {
     const content = stripHtml(data.description);
     const title = data.title || row.title || '';
     const location = data.jobLocation?.address?.addressLocality || row.location || '';
-    const salary = parseSalary(content);
-    const profile = loadProfile();
-    run(
-      `UPDATE jobs SET
-        description = ?, location = ?, work_mode = ?, experience_level = ?,
-        salary_min = ?, salary_max = ?, salary_currency = ?, relevance_score = ?
-       WHERE id = ?`,
-      [
-        content.slice(0, 20000), location,
-        detectWorkMode(title, location, content),
-        detectExperience(title, content),
-        salary?.min ?? null, salary?.max ?? null, 'USD',
-        relevanceScore(profile, title, content),
-        row.id
-      ]
-    );
+    applyEnrichment(row, { title, content, location });
     return true;
   } catch (err) {
     return false;

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api, fmtDate } from '../api.js';
+import { PIPELINE_STATUSES } from '../constants.js';
 
 function StatCard({ label, value, sub }) {
   return (
@@ -54,7 +55,7 @@ export default function Dashboard({ onGo }) {
           <h3>Pipeline</h3>
           {stats.byStatus.length === 0 && <p className="muted">No applications yet.</p>}
           <div className="pipeline">
-            {['PENDING', 'APPLIED', 'INTERVIEW', 'OFFER', 'REJECTED', 'ARCHIVED'].map((s) => (
+            {PIPELINE_STATUSES.map((s) => (
               <div key={s} className="pipeline-row">
                 <span className="pipeline-label">{s}</span>
                 <div className="pipeline-track">

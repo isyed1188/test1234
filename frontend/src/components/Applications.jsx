@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api, fmtDate } from '../api.js';
-
-const STATUSES = ['PENDING', 'APPLIED', 'INTERVIEW', 'OFFER', 'REJECTED', 'ARCHIVED'];
+import { PIPELINE_STATUSES } from '../constants.js';
 
 export default function Applications() {
   const [apps, setApps] = useState([]);
@@ -46,7 +45,7 @@ export default function Applications() {
           <h3 className="grow">Application reports</h3>
           <select className="input" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
             <option value="">All statuses</option>
-            {STATUSES.map((s) => <option key={s}>{s}</option>)}
+            {PIPELINE_STATUSES.map((s) => <option key={s}>{s}</option>)}
           </select>
           <a className="btn" href="/api/applications/export">Export CSV</a>
           <button className="btn" onClick={addManual}>Add manually</button>
@@ -83,7 +82,7 @@ export default function Applications() {
                       value={a.status}
                       onChange={(e) => setStatus(a.id, e.target.value)}
                     >
-                      {STATUSES.map((s) => <option key={s}>{s}</option>)}
+                      {PIPELINE_STATUSES.map((s) => <option key={s}>{s}</option>)}
                     </select>
                   </td>
                   <td>{a.resume_name || '-'}</td>
