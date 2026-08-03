@@ -68,6 +68,13 @@ CREATE TABLE IF NOT EXISTS logs (
 );
 `);
 
+for (const [table, column, definition] of [['jobs', 'enrich_attempts', 'INTEGER NOT NULL DEFAULT 0']]) {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all();
+  if (!columns.some((c) => c.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
+}
+
 export function all(sql, params = []) {
   return db.prepare(sql).all(...params);
 }
@@ -101,7 +108,7 @@ export function getSetting(key, fallback = null) {
 }
 
 export function setSetting(key, value) {
-  const json = typeof value === 'string' ? JSON.stringify(value) : JSON.stringify(value);
+  const json = JSON.stringify(value);
   run(
     'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
     [key, json]

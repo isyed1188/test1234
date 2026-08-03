@@ -13,7 +13,7 @@ into a terminal (on Mac, open the "Terminal" app; on Windows, use PowerShell).
 
 ### Step 1 - Install Node.js
 
-Go to https://nodejs.org and download the **LTS** version (v22 or newer).
+Go to https://nodejs.org and download the **LTS** version (v22.9 or newer).
 Run the installer and click through the defaults. After installing, open a
 terminal and type `node -v`. If you see a version number, you are ready.
 
@@ -52,7 +52,7 @@ browser part of the app. You only do this once.
 Type:
 
 ```bash
-node backend/server.js
+npm start
 ```
 
 You will see text like "JobHunt Coach running on http://localhost:4000".
@@ -122,7 +122,7 @@ Your original README described an automated "auto-apply" Playwright bot that sub
 ## Quick start (Mac / Linux)
 
 ### Prerequisites
-1. Node.js 22+ (uses built-in `node:sqlite`, no native compile needed)
+1. Node.js 22.9+ (uses built-in `node:sqlite`, no native compile needed)
 2. Optional: Ollama or LM Studio running locally for resume tailoring
 3. Optional: a Discord webhook URL for digests
 
@@ -130,7 +130,7 @@ Your original README described an automated "auto-apply" Playwright bot that sub
 ```bash
 npm install
 npx vite build
-node backend/server.js
+npm start
 ```
 
 Or simply `./start.sh`. Then open `http://localhost:4000`.
@@ -139,7 +139,7 @@ Or simply `./start.sh`. Then open `http://localhost:4000`.
 ```bash
 npm install          # install dependencies
 npx vite build       # build UI into ./public
-node backend/server.js
+npm start
 ```
 
 ---
@@ -176,7 +176,7 @@ Descriptions for Greenhouse and Workday jobs are fetched in the background (15 p
 
 Configured in **Notifications & Settings**:
 
-- **Ollama**: host `http://192.168.1.152:11434`, model e.g. `gemma4:latest`
+- **Ollama**: host `http://localhost:11434`, model e.g. `llama3.1:latest`
 - **LM Studio**: host `http://localhost:1234/v1` (OpenAI-compatible)
 
 Used for:
@@ -243,6 +243,7 @@ If the model is unreachable, tailoring returns a clear error and the rest of the
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `PORT` | `4000` | HTTP port |
+| `HOST` | `127.0.0.1` | Bind address; set `0.0.0.0` to expose on your network (no auth!) |
 | `OLLAMA_HOST` | — | Fallback hint; LLM host is set in the UI |
 | `OLLAMA_MODEL` | — | Fallback hint; model is set in the UI |
 

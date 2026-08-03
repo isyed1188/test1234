@@ -11,8 +11,8 @@ export function getLlamaConfig() {
   }
   return {
     mode: 'ollama',
-    host: getSetting('llmHost', 'http://192.168.1.152:11434'),
-    model: getSetting('llmModel', 'gemma4:latest')
+    host: getSetting('llmHost', process.env.OLLAMA_HOST || 'http://localhost:11434'),
+    model: getSetting('llmModel', process.env.LLM_MODEL || 'llama3.1:latest')
   };
 }
 

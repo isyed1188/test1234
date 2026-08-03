@@ -37,7 +37,8 @@ function stripHtml(html) {
 
 export function detectWorkMode(title, location, content) {
   const t = `${title} ${location} ${content}`.toLowerCase();
-  if (t.includes('remote')) return 'Remote';
+  const remoteDenied = /(not|non|no)[\s-]remote|remote\s+(is\s+)?not|onsite only|on-site only|in[\s-]office only/.test(t);
+  if (t.includes('remote') && !remoteDenied) return 'Remote';
   if (t.includes('hybrid')) return 'Hybrid';
   return 'Onsite';
 }
@@ -53,32 +54,42 @@ export function detectExperience(title, content) {
   return 'Not specified';
 }
 
-function parseSalary(text) {
+export function parseSalary(text) {
   const clean = String(text || '').replace(/[,\s]/g, '');
-  const range = clean.match(/\$?(\d{3,})\s*[-–—to]+\s*\$?(\d{3,})/i);
+  const range = clean.match(/\$?(\d{5,})(?:-|–|—|to)+\$?(\d{5,})/i);
   if (range) {
     const min = Number(range[1]);
     const max = Number(range[2]);
-    if (min && max && min <= max) return { min, max };
+    if (isPlausibleSalary(min) && isPlausibleSalary(max) && min <= max) return { min, max };
   }
-  const single = clean.match(/\$?(\d{3,})k/i);
+  const single = clean.match(/\$?(\d{2,4})k\b/i);
   if (single) {
     const v = Number(single[1]) * 1000;
-    return { min: v, max: v };
+    if (isPlausibleSalary(v)) return { min: v, max: v };
   }
   return null;
 }
 
-function relevanceScore(profile, title, content) {
+function isPlausibleSalary(value) {
+  return Number.isFinite(value) && value >= 10000 && value <= 2000000;
+}
+
+export function relevanceScore(profile, title, content) {
   const skills = profile?.skills || [];
   if (!skills.length) return 0;
   const haystack = `${title} ${content}`.toLowerCase();
   let hits = 0;
   for (const s of skills) {
-    const skill = String(s || '').trim();
-    if (skill && haystack.includes(skill.toLowerCase())) hits++;
+    const skill = String(s || '').trim().toLowerCase();
+    if (!skill) continue;
+    const pattern = new RegExp(`(?<![a-z0-9+#.])${escapeRegExp(skill)}(?![a-z0-9+#])`);
+    if (pattern.test(haystack)) hits++;
   }
   return Math.min(100, Math.round((hits / skills.length) * 100));
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 async function fetchJson(url, timeoutMs = 20000) {
@@ -115,7 +126,8 @@ async function postJson(url, body, timeoutMs = 60000) {
 
 function saveJob(job) {
   try {
-    const result = run(
+    const existing = get('SELECT id FROM jobs WHERE external_id = ?', [job.external_id]);
+    run(
       `INSERT INTO jobs
         (external_id, source, title, company, location, work_mode, experience_level,
          salary_min, salary_max, salary_currency, url, description, skills, category,
@@ -124,10 +136,13 @@ function saveJob(job) {
        ON CONFLICT(external_id) DO UPDATE SET
          title = excluded.title, company = excluded.company, location = excluded.location,
          work_mode = excluded.work_mode, experience_level = excluded.experience_level,
-         salary_min = excluded.salary_min, salary_max = excluded.salary_max,
+         salary_min = COALESCE(excluded.salary_min, jobs.salary_min),
+         salary_max = COALESCE(excluded.salary_max, jobs.salary_max),
          salary_currency = excluded.salary_currency, url = excluded.url,
-         description = excluded.description, relevance_score = excluded.relevance_score,
-         fetched_at = excluded.fetched_at`,
+         relevance_score = excluded.relevance_score,
+         fetched_at = excluded.fetched_at,
+         description = CASE WHEN excluded.description != '' THEN excluded.description
+                            ELSE jobs.description END`,
       [
         job.external_id, job.source, job.title, job.company, job.location, job.work_mode,
         job.experience_level, job.salary_min, job.salary_max, job.salary_currency,
@@ -135,7 +150,7 @@ function saveJob(job) {
         new Date().toISOString()
       ]
     );
-    return result.changes > 0;
+    return !existing;
   } catch (err) {
     log('error', `save job failed: ${err.message}`);
     return false;
@@ -339,9 +354,18 @@ async function enrichGreenhouseJob(row) {
     );
     return true;
   } catch (err) {
-    run('UPDATE jobs SET fetched_at = ? WHERE id = ?', [new Date().toISOString(), row.id]);
+    markEnrichFailure(row.id);
     return false;
   }
+}
+
+const MAX_ENRICH_ATTEMPTS = 3;
+
+function markEnrichFailure(id) {
+  run(
+    'UPDATE jobs SET enrich_attempts = enrich_attempts + 1, fetched_at = ? WHERE id = ?',
+    [new Date().toISOString(), id]
+  );
 }
 
 function extractLdJson(html) {
@@ -370,7 +394,10 @@ async function enrichWorkdayJob(row) {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const html = await res.text();
     const data = extractLdJson(html);
-    if (!data || !data.description) return false;
+    if (!data || !data.description) {
+      markEnrichFailure(row.id);
+      return false;
+    }
     const content = stripHtml(data.description);
     const title = data.title || row.title || '';
     const location = data.jobLocation?.address?.addressLocality || row.location || '';
@@ -392,6 +419,7 @@ async function enrichWorkdayJob(row) {
     );
     return true;
   } catch (err) {
+    markEnrichFailure(row.id);
     return false;
   }
 }
@@ -407,8 +435,11 @@ async function enrichOnce() {
        FROM jobs
        WHERE (description IS NULL OR description = '')
          AND source IN ('Greenhouse', 'Fortune 500')
-       ORDER BY CASE WHEN source = 'Fortune 500' THEN 0 ELSE 1 END, id ASC
-       LIMIT 15`
+         AND enrich_attempts < ?
+       ORDER BY enrich_attempts ASC,
+         CASE WHEN source = 'Fortune 500' THEN 0 ELSE 1 END, id ASC
+       LIMIT 15`,
+      [MAX_ENRICH_ATTEMPTS]
     );
     if (rows.length === 0) return;
     const results = await Promise.all(rows.map((row) => {

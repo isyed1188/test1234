@@ -88,15 +88,17 @@ export function applyTailoring(content, summary, skills) {
   let output = content.trim();
   if (summary) {
     const headline = `# Professional Summary\n\n${summary}\n`;
+    const before = output;
     output = output.replace(/#{1,3}\s*(Professional Summary|Summary|Objective)[^\n]*\n+[\s\S]*?(?=#{1,3}\s|$)/i, headline);
-    if (output === content.trim()) {
+    if (output === before) {
       output = `${headline}\n${output}`;
     }
   }
   if (skills) {
     const block = `# Skills\n\n${skills}\n`;
+    const before = output;
     output = output.replace(/#{1,3}\s*Skills?[^\n]*\n+[\s\S]*?(?=#{1,3}\s|$)/i, block);
-    if (output === (summary ? content.trim() : content.trim())) {
+    if (output === before) {
       output = `${output}\n${block}`;
     }
   }

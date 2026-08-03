@@ -1,4 +1,4 @@
-import { all, get, log } from './database.js';
+import { all, get, getSetting, log } from './database.js';
 
 export async function sendDiscord(webhookUrl, content) {
   if (!webhookUrl) throw new Error('No Discord webhook URL configured');
@@ -22,7 +22,7 @@ function buildDigest() {
   const stats = get(
     `SELECT
        COUNT(*) AS total_jobs,
-       SUM(CASE WHEN (SELECT COUNT(*) FROM applications a WHERE a.job_id = jobs.id) > 0 THEN 1 ELSE 0 END) AS applied_jobs
+       SUM(CASE WHEN EXISTS (SELECT 1 FROM applications a WHERE a.job_id = jobs.id AND a.status != 'PENDING') THEN 1 ELSE 0 END) AS applied_jobs
      FROM jobs`
   );
   const applied = all(
@@ -58,10 +58,9 @@ export function buildDigestMessage() {
 }
 
 export async function sendDailyDigest() {
-  const webhookUrl = get('SELECT value FROM settings WHERE key = ?', ['discordWebhook']);
-  if (!webhookUrl) throw new Error('No Discord webhook URL configured');
+  const url = getSetting('discordWebhook', '');
+  if (!url) throw new Error('No Discord webhook URL configured');
   try {
-    const url = JSON.parse(webhookUrl.value);
     const content = buildDigest();
     const result = await sendDiscord(url, content);
     log('info', 'daily digest sent to Discord');
