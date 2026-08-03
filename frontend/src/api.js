@@ -19,6 +19,12 @@ export function fmtMoney(value) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(value);
 }
 
+export function fmtSalaryRange(min, max) {
+  if (!min && !max) return '-';
+  if (min && max) return `${fmtMoney(min)} - ${fmtMoney(max)}`;
+  return fmtMoney(min || max);
+}
+
 export function fmtDate(value) {
   if (!value) return '-';
   const d = new Date(value);
