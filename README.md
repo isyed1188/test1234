@@ -1,240 +1,163 @@
-# AutoApply AI — Open Source Job Automation & Reporting Engine
+# JobHunt Coach
 
-A **completely free, fully self-hosted** automated job application platform built for **IT Infrastructure**, **Linux Engineering**, **DevOps/SRE**, and **AI/ML Engineering** roles targeting **$200,000+** compensation.
+A self-hosted job search companion: a **job application tracker**, **resume manager with local AI tailoring**, and **job discovery via public ATS APIs** (Greenhouse & Lever boards).
 
-Zero recurring costs. Zero cloud AI subscriptions. Everything runs locally.
-
----
-
-## 🏛️ Architecture Overview
-
-```
-┌──────────────────────────────────────────────────────────────────┐
-│               Web UI Dashboard (Vite + React)                    │
-│  - Dashboard & Pipeline │ Search & Filters │ Resume Manager      │
-│  - Job Reports │ Profile │ Notifications & Settings │ Logs       │
-└────────────────────────────┬─────────────────────────────────────┘
-                             │ HTTP / REST API (Port 4000)
-┌────────────────────────────▼─────────────────────────────────────┐
-│                   Express.js Backend Server                      │
-│  - Application Controller  │ SQLite3 Database                    │
-│  - Multer Resume Upload     │ CSV / Excel Report Generator       │
-└───────┬─────────────────────┬────────────────────┬───────────────┘
-        │                     │                    │
-┌───────▼───────────┐  ┌──────▼──────────┐  ┌─────▼──────────────┐
-│  Job Scraper      │  │ Playwright Bot   │  │ Local Ollama AI     │
-│  - Greenhouse API │  │ - Headless Mode  │  │ http://192.168.1.152│
-│  - LinkedIn Seeds │  │ - Headed Mode    │  │ :11434  (gemma4)   │
-│  - Dice / Monster │  │ - CDP Attach Mode│  │ - Resume Tailoring  │
-│  - Lever / Indeed │  │ - Emergency Stop │  │ - Q&A Generation    │
-└───────────────────┘  └─────────────────┘  └────────────────────┘
-```
+Built as a legitimate alternative to automated application bots — it helps you organize, tailor, and track your applications, while **you** do the actual applying.
 
 ---
 
-## 🚀 Quick Start (Mac / Linux)
+## Why this version
+
+Your original README described an automated "auto-apply" Playwright bot that submits applications across LinkedIn, Indeed, Dice, etc. Mass automated submission bypasses those sites' anti-bot protections and violates their Terms of Service, so it is **not included**. This version keeps the genuinely useful parts:
+
+- Job discovery through **official public APIs** (Greenhouse boards API, Lever postings API) — no scraping of protected sites
+- A **tracker / pipeline** for every job you choose to apply to
+- **Resume management + AI tailoring** that only reorders and rewords facts already in your resume — it never fabricates experience
+- **Reports & digests** (CSV export, Discord digests)
+
+---
+
+## Features
+
+| Feature | Description |
+|---------|-------------|
+| Job import | Pulls live listings from 17 Greenhouse boards, 3 Lever boards, and 9 Fortune 500 (Workday) boards via their public APIs; add any company slug manually |
+| Relevance scoring | Scores each job 0–100 against the skills in your profile |
+| Search & filters | Keyword, work mode, experience level, source, salary bucket ($100k/$150k/$200k+), minimum match % |
+| Pipeline tracking | PENDING → APPLIED → INTERVIEW → OFFER → REJECTED → ARCHIVED |
+| Resume manager | Upload PDF/DOCX/DOC/TXT/MD; set a baseline; generate a per-job tailored version with your local LLM |
+| CSV export | One-click spreadsheet of all applications with the exact resume version used |
+| Discord digests | Daily summary via a webhook you create |
+| Local AI | Ollama or LM Studio — the model runs on your own machine, $0 cost |
+
+---
+
+## Quick start (Mac / Linux)
 
 ### Prerequisites
-1. **Node.js LTS** — download from [nodejs.org](https://nodejs.org)
-2. *(Optional)* **Ollama** running on your local network at `http://192.168.1.152:11434`
-   - Or LM Studio at `http://localhost:1234/v1`
-3. *(Optional for CDP mode)* **Chrome** launched with remote debugging:
-   ```bash
-   open -a "Google Chrome" --args --remote-debugging-port=9222
-   ```
+1. Node.js 22+ (uses built-in `node:sqlite`, no native compile needed)
+2. Optional: Ollama or LM Studio running locally for resume tailoring
+3. Optional: a Discord webhook URL for digests
 
-### Run the App
+### Run
 ```bash
-cd ~/Desktop/testkuchoo
-chmod +x start.sh
-./start.sh
+npm install
+npx vite build
+node backend/server.js
 ```
 
-Then open your browser to **`http://localhost:4000`** 🎉
+Or simply `./start.sh`. Then open `http://localhost:4000`.
 
-### Manual Commands
+### Manual commands
 ```bash
-# Install dependencies
-npm install
-
-# Build Web UI
-npx vite build --outDir ../public
-
-# Start server (serves UI + API on port 4000)
+npm install          # install dependencies
+npx vite build       # build UI into ./public
 node backend/server.js
 ```
 
 ---
 
-## 🖥️ Web UI Tabs
+## Web UI tabs
 
 | Tab | Purpose |
 |-----|---------|
-| **Dashboard & Pipeline** | Live stats, bot controls, job queue table |
-| **Search & Filters** | Salary buckets, work mode, skills, saved search profiles |
-| **Resume Manager & AI Tailor** | Upload resumes, set baseline, AI-tailor per job |
-| **Job Reports** | Full application tracking table with CSV export |
-| **Profile** | Candidate info, URLs, salary target, cover letter template |
-| **Notifications & Settings** | WhatsApp digest, Discord webhook, all settings |
-| **Logs** | Real-time activity logs from backend engine |
+| Dashboard | Stats, pipeline summary, recent applications |
+| Search & Import | Import boards, filter/sort jobs, open job details |
+| Applications | Full application table, status updates, CSV export |
+| Resume Manager | Upload resumes, set baseline, AI-tailor per job |
+| Profile | Candidate info + skills (drives relevance scoring) |
+| Notifications & Settings | LLM provider config, Discord webhook |
+| Logs | Backend activity + import/enrichment status |
 
 ---
 
-## 🤖 Browser Automation Modes
+## Job discovery sources
 
-### 1. Headless Playwright (Default)
-- Background invisible Chromium
-- Randomized stealth typing delays (30-100ms per char)
-- Custom user-agent string
-- Automatic CAPTCHA pause & alert
+| Source | API | Boards |
+|--------|-----|--------|
+| Greenhouse | `boards-api.greenhouse.io/v1/boards/{company}/jobs` | gitlab, datadog, coinbase, reddit, dropbox, instacart, brex, airtable, stripe, asana, gusto, chime, vercel, brave, sofi, applovin, duolingo |
+| Lever | `api.lever.co/v0/postings/{company}?mode=json` | plaid, farfetch, webfx |
+| Fortune 500 (Workday) | `{domain}/wday/cxs/{tenant}/{site}/jobs` + job page `application/ld+json` | Bank of America, Target, Amgen, Boeing, Citigroup, Comcast, Micron, Nike, Intel |
 
-### 2. Headed (Visible Browser)
-- Watch the bot fill forms in real-time
-- Good for debugging or monitoring
+Add any company board slug in the UI (e.g. `datadog`, `farfetch`, `bankofamerica`, `intel`). Invalid slugs are skipped and logged.
 
-### 3. User Browser Attachment (CDP Mode)
-- Attaches to **your already-logged-in Chrome session** via Chrome DevTools Protocol on port 9222
-- Bypasses login walls (LinkedIn, Dice, etc.)
-- Doesn't close your browser when done
-- **To enable:** Launch Chrome with `--remote-debugging-port=9222`, then select CDP mode in Bot Controls
+Descriptions for Greenhouse and Workday jobs are fetched in the background (15 per batch) so imports stay fast; watch the Logs tab for progress.
 
 ---
 
-## 🛡️ Safety Controls
+## Local AI (Ollama / LM Studio)
 
-| Control | Default | Description |
-|---------|---------|-------------|
-| **Dry Run** | ✅ ON | Forms are filled but NOT submitted. Safe for testing. |
-| **Manual Approval** | OFF | Each job requires your click before submitting |
-| **Emergency Stop** | Always available | Kills the current bot batch immediately |
-| **Company Blacklist** | Empty | Comma-separated companies to skip |
+Configured in **Notifications & Settings**:
 
-> ⚠️ **Always start in Dry Run mode.** Switch to Live Submit only after verifying the bot fills forms correctly.
+- **Ollama**: host `http://192.168.1.152:11434`, model e.g. `gemma4:latest`
+- **LM Studio**: host `http://localhost:1234/v1` (OpenAI-compatible)
 
----
+Used for:
+- Resume tailoring per job description (summary + skills, truthful only)
+- Relevance scoring runs locally (keyword overlap — no LLM needed)
 
-## 📄 Resume Manager & AI Tailoring
-
-- **Supported Formats:** PDF, DOCX, DOC, TXT, Markdown (`.md`)
-- Upload resumes via drag-and-drop in the **Resume Manager** tab
-- Set one as your **Baseline** (default for all applications)
-- Per-job **Local AI Tailoring:** Ollama reads the job description and rewrites your professional summary & skills specifically for that company — **100% truthful, no fabrication**
-- Every application records the **exact resume version submitted**
+If the model is unreachable, tailoring returns a clear error and the rest of the app keeps working.
 
 ---
 
-## 💡 Local AI (Ollama) — $0 Cost
+## API overview
 
-The app connects to your local Ollama server at `http://192.168.1.152:11434`.
-
-**Default model:** `gemma4:latest`
-
-**AI-powered features:**
-- Resume tailoring per job description
-- Cover letter / custom question auto-answers
-- Job relevance scoring (0-100)
-- WhatsApp daily digest report generation
-
-**LM Studio support:** Switch provider to LM Studio in Bot Controls → uses `http://localhost:1234/v1` (OpenAI-compatible API).
-
----
-
-## 📊 Excel / CSV Report Export
-
-Click **"Export CSV Report"** in the Job Reports tab to download a spreadsheet containing:
-- Job ID, Company, Title, Category, Location
-- **Work Mode** (Remote / Hybrid / Onsite)
-- **Experience Level** (Junior / Senior / Staff / Principal / Director)
-- Salary Target
-- Status (APPLIED / PENDING / FAILED)
-- Portal Type (LinkedIn, Dice, Monster, Greenhouse, Lever)
-- Applied Timestamp
-- **Exact Resume Version Submitted** (including AI-tailored variant names)
-- Direct Job URL
+| Route | Description |
+|-------|-------------|
+| `POST /api/import` | Import one company board (`source`, `company`, `keyword`) |
+| `POST /api/import/all` | Import all known boards (optional `keyword`) |
+| `GET /api/jobs` | List jobs with filters (`q`, `work_mode`, `experience_level`, `source`, `salary_bucket`, `min_relevance`, `status`) |
+| `GET /api/jobs/:id` | Job detail + its applications |
+| `PATCH /api/jobs/:id` | Update relevance / skills |
+| `POST /api/applications` | Record an application |
+| `PATCH /api/applications/:id` | Update status / notes |
+| `GET /api/applications/export` | Download CSV report |
+| `POST /api/resumes/upload` | Upload a resume (multipart `file`) |
+| `POST /api/resumes/:id/baseline` | Set baseline resume |
+| `POST /api/resumes/:id/tailor` | AI-tailor for a job (`job_id`) |
+| `GET/PUT /api/profile` | Candidate profile |
+| `GET/PUT /api/settings` | LLM + webhook settings |
+| `POST /api/notify/test` `POST /api/notify/digest` | Discord notifications |
+| `GET /api/logs` | Backend logs |
 
 ---
 
-## 📱 WhatsApp Group Digest
-
-In **Notifications & Settings:**
-1. Enter your WhatsApp number or group ID
-2. Click **"Generate WhatsApp Report"**
-3. Ollama generates an emoji-formatted daily pipeline summary
-4. Copy/paste to your WhatsApp group (or integrate with CallMeBot API for automated sends)
-
----
-
-## 🗂️ Project File Structure
+## Project structure
 
 ```
-testkuchoo/
 ├── backend/
-│   ├── server.js          — Express REST API (all /api routes)
-│   ├── database.js        — SQLite3 engine (tables, migrations, query helpers)
-│   ├── bot.js             — Playwright application bot (Headless / Headed / CDP)
-│   ├── scraper.js         — Job discovery (Greenhouse API + seed listings)
-│   ├── ollama.js          — LocalAIService (Ollama + LM Studio dual support)
-│   ├── resumeEngine.js    — Multi-format resume parser & tailored export writer
-│   └── notifier.js        — WhatsApp / Discord notification dispatcher
-├── frontend/src/
-│   ├── App.jsx            — Main tab router
-│   ├── index.css          — Full vanilla CSS design system (dark glassmorphism)
-│   └── components/
-│       ├── Header.jsx         — Nav tabs + AI status badge + bot state
-│       ├── StatsOverview.jsx  — Stats cards grid
-│       ├── BotControls.jsx    — Browser mode, safety toggles, AI config
-│       ├── SearchFiltersPanel.jsx — Salary buckets, filters, search profiles
-│       ├── ResumeManager.jsx  — Upload, baseline, AI tailor studio
-│       ├── JobReportsTable.jsx — Application tracking table + CSV export
-│       ├── JobDetailModal.jsx — Job detail popup
-│       ├── ProfileManager.jsx — Candidate profile editor
-│       ├── LogsViewer.jsx     — Real-time backend log viewer
-│       └── NotificationsPanel.jsx — WhatsApp/Discord settings
-├── data/
-│   ├── autoapply.db       — SQLite3 database (auto-created)
-│   ├── screenshots/       — Bot screenshot captures per application
-│   └── tailored_resumes/  — AI-tailored resume exports per job
-├── uploads/               — Uploaded resume files (PDF, DOCX, TXT, etc.)
-├── public/                — Built frontend static assets (served by Express)
-├── vite.config.js         — Vite build config (root: ./frontend, outDir: ../public)
-├── package.json           — npm scripts (start, build, dev)
-└── start.sh               — One-command launcher script
+│   ├── server.js       — Express REST API + static UI server (port 4000)
+│   ├── database.js     — SQLite engine (node:sqlite), tables, helpers
+│   ├── scraper.js      — Greenhouse/Lever board import + background enrichment
+│   ├── ollama.js       — Local AI client (Ollama + LM Studio)
+│   ├── resumeEngine.js — Resume text extraction + truthful tailoring
+│   └── notifier.js     — Discord digests
+├── frontend/
+│   ├── index.html
+│   └── src/
+│       ├── App.jsx     — Tab router
+│       ├── index.css   — Dark glassmorphism design system
+│       └── components/ — Dashboard, Search, Applications, Resumes, Profile, Settings, Logs
+├── data/               — SQLite DB + tailored resumes (auto-created)
+├── uploads/            — Uploaded resume files
+├── public/             — Built UI assets
+├── vite.config.js
+├── package.json
+└── start.sh
 ```
 
 ---
 
-## 🛠️ Tech Stack
+## Environment variables (optional)
 
-| Layer | Technology |
-|-------|-----------|
-| **Frontend** | Vite 8, React 19, Vanilla CSS (Dark Glassmorphism), Lucide Icons |
-| **Backend** | Node.js, Express 5, SQLite3 |
-| **Automation** | Playwright (Chromium) — Headless, Headed, CDP attach |
-| **Resume Parsing** | Node.js `fs` (TXT/MD native), binary regex for PDF/DOCX |
-| **Local AI** | Ollama REST API (`http://192.168.1.152:11434`) or LM Studio |
-| **File Upload** | Multer (PDF, DOCX, DOC, TXT, MD) |
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `PORT` | `4000` | HTTP port |
+| `OLLAMA_HOST` | — | Fallback hint; LLM host is set in the UI |
+| `OLLAMA_MODEL` | — | Fallback hint; model is set in the UI |
 
 ---
 
-## ⚙️ Environment Variables (optional `.env`)
+## License
 
-```bash
-PORT=4000
-OLLAMA_HOST=http://192.168.1.152:11434
-OLLAMA_MODEL=gemma4:latest
-LMSTUDIO_HOST=http://localhost:1234/v1
-```
-
----
-
-## 📋 Known Limitations
-
-- **CAPTCHA:** If a job portal shows a CAPTCHA, the bot automatically pauses and logs a warning. Manual intervention required.
-- **LinkedIn:** LinkedIn Easy Apply automation works best in CDP mode (using your logged-in session).
-- **Resume PDF parsing:** Binary PDF text extraction is best-effort. For ideal AI tailoring, upload a plain `.txt` or `.md` version of your resume alongside the PDF.
-
----
-
-## 📜 License
-
-100% Free & Open Source — MIT License
+MIT
