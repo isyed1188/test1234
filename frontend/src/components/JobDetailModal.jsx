@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api, fmtMoney, fmtDate } from '../api.js';
+import { api, fmtSalaryRange, fmtDate } from '../api.js';
 import { X } from 'lucide-react';
 
 export default function JobDetailModal({ jobId, onClose, onAction }) {
@@ -72,7 +72,7 @@ export default function JobDetailModal({ jobId, onClose, onAction }) {
           <div className="chips">
             <span className={`pill ${job.work_mode ? 'mode-' + job.work_mode.toLowerCase() : ''}`}>{job.work_mode}</span>
             <span className="pill">{job.experience_level}</span>
-            {job.salary_min && <span className="pill">{fmtMoney(job.salary_min)}{job.salary_max ? ` - ${fmtMoney(job.salary_max)}` : ''}</span>}
+            {job.salary_min && <span className="pill">{fmtSalaryRange(job.salary_min, job.salary_max)}</span>}
             <span className="pill">match {job.relevance_score}%</span>
             <span className="pill">{job.source}</span>
           </div>

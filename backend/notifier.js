@@ -1,23 +1,18 @@
 import { all, get, log } from './database.js';
 import { assertDiscordWebhook } from './validate.js';
+import { fetchWithTimeout } from './http.js';
 
 export async function sendDiscord(webhookUrl, content) {
   if (!webhookUrl) throw new Error('No Discord webhook URL configured');
   assertDiscordWebhook(webhookUrl);
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 15000);
-  try {
-    const res = await fetch(webhookUrl, {
-      method: 'POST',
-      signal: controller.signal,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content: String(content).slice(0, 1900) })
-    });
-    if (!res.ok) throw new Error(`Discord webhook failed (${res.status})`);
-    return { ok: true };
-  } finally {
-    clearTimeout(timer);
-  }
+  const res = await fetchWithTimeout(webhookUrl, {
+    method: 'POST',
+    timeoutMs: 15000,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content: String(content).slice(0, 1900) })
+  });
+  if (!res.ok) throw new Error(`Discord webhook failed (${res.status})`);
+  return { ok: true };
 }
 
 function buildDigest() {

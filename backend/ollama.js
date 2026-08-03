@@ -1,5 +1,6 @@
 import { getSetting } from './database.js';
 import { assertHttpUrl } from './validate.js';
+import { fetchWithTimeout } from './http.js';
 
 export function getLlamaConfig() {
   const mode = getSetting('llmMode', 'ollama');
@@ -20,57 +21,33 @@ export function getLlamaConfig() {
 export async function generate(prompt, timeoutMs = 90000) {
   const cfg = getLlamaConfig();
   assertHttpUrl(cfg.host, 'LLM host');
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    let res;
-    if (cfg.mode === 'lmstudio') {
-      res = await fetch(`${cfg.host.replace(/\/$/, '')}/chat/completions`, {
-        method: 'POST',
-        signal: controller.signal,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: cfg.model,
-          messages: [{ role: 'user', content: prompt }],
-          temperature: 0.4,
-          stream: false
-        })
-      });
-    } else {
-      res = await fetch(`${cfg.host.replace(/\/$/, '')}/api/generate`, {
-        method: 'POST',
-        signal: controller.signal,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: cfg.model,
-          prompt,
-          stream: false,
-          options: { temperature: 0.4 }
-        })
-      });
-    }
-    if (!res.ok) {
-      throw new Error(`LLM request failed (${res.status}): ${await res.text()}`);
-    }
-    const data = await res.json();
-    const text = cfg.mode === 'lmstudio' ? data?.choices?.[0]?.message?.content : data?.response;
-    return (text || '').trim();
-  } finally {
-    clearTimeout(timer);
+  const host = cfg.host.replace(/\/$/, '');
+  const isLmStudio = cfg.mode === 'lmstudio';
+  const url = isLmStudio ? `${host}/chat/completions` : `${host}/api/generate`;
+  const body = isLmStudio
+    ? { model: cfg.model, messages: [{ role: 'user', content: prompt }], temperature: 0.4, stream: false }
+    : { model: cfg.model, prompt, stream: false, options: { temperature: 0.4 } };
+  const res = await fetchWithTimeout(url, {
+    method: 'POST',
+    timeoutMs,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    throw new Error(`LLM request failed (${res.status}): ${await res.text()}`);
   }
+  const data = await res.json();
+  const text = isLmStudio ? data?.choices?.[0]?.message?.content : data?.response;
+  return (text || '').trim();
 }
 
 export async function checkHealth() {
   const cfg = getLlamaConfig();
+  const host = cfg.host.replace(/\/$/, '');
+  const url = cfg.mode === 'lmstudio' ? `${host}/models` : `${host}/api/tags`;
   try {
     assertHttpUrl(cfg.host, 'LLM host');
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 5000);
-    const url = cfg.mode === 'lmstudio'
-      ? `${cfg.host.replace(/\/$/, '')}/models`
-      : `${cfg.host.replace(/\/$/, '')}/api/tags`;
-    const res = await fetch(url, { signal: controller.signal });
-    clearTimeout(timer);
+    const res = await fetchWithTimeout(url, { timeoutMs: 5000 });
     return { ok: res.ok, status: res.status, config: cfg };
   } catch (err) {
     return { ok: false, status: 0, config: cfg, error: err.message };
