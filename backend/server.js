@@ -10,15 +10,24 @@ import { importFrom, importAll, knownSources, startEnricher } from './scraper.js
 import { checkHealth } from './ollama.js';
 import { extractText, isSupported, tailorResume, applyTailoring } from './resumeEngine.js';
 import { sendDiscord, buildDigestMessage } from './notifier.js';
+import { assertDiscordWebhook, assertHttpUrl, assertSlug, clampText } from './validate.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 4000);
+const HOST = process.env.HOST || '127.0.0.1';
 const uploadsDir = path.join(__dirname, '..', 'uploads');
 const tailoredDir = path.join(__dirname, '..', 'data', 'tailored_resumes');
 fs.mkdirSync(uploadsDir, { recursive: true });
 fs.mkdirSync(tailoredDir, { recursive: true });
 
 const app = express();
+app.disable('x-powered-by');
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  next();
+});
 app.use(express.json({ limit: '5mb' }));
 
 const storage = multer.diskStorage({
@@ -29,6 +38,10 @@ const storage = multer.diskStorage({
   }
 });
 const upload = multer({ storage, limits: { fileSize: 15 * 1024 * 1024 } });
+
+const APPLICATION_STATUSES = new Set([
+  'PENDING', 'APPLIED', 'INTERVIEW', 'OFFER', 'REJECTED', 'ARCHIVED'
+]);
 
 function nowIso() {
   return new Date().toISOString();
@@ -168,7 +181,12 @@ app.post('/api/import', route(async (req, res) => {
   const { source, company, keyword } = req.body || {};
   if (!source || !company) throw httpError(400, 'source and company required');
   try {
-    const count = await importFrom(source, company, keyword || '');
+    assertSlug(company, 'company');
+  } catch (err) {
+    throw httpError(400, err.message);
+  }
+  try {
+    const count = await importFrom(source, company, clampText(keyword, 200));
     log('info', `imported ${count} jobs from ${source}/${company}`);
     res.json({ imported: count });
   } catch (err) {
@@ -180,7 +198,7 @@ app.post('/api/import', route(async (req, res) => {
 app.post('/api/import/all', route(async (req, res) => {
   const { keyword } = req.body || {};
   try {
-    const results = await importAll(null, keyword || '');
+    const results = await importAll(null, clampText(keyword, 200));
     res.json(results);
   } catch (err) {
     log('error', `import all failed: ${err.message}`);
@@ -218,10 +236,14 @@ app.post('/api/applications', route((req, res) => {
     throw httpError(404, 'Resume not found');
   }
   const st = status || 'PENDING';
+  if (!APPLICATION_STATUSES.has(st)) {
+    throw httpError(400, `status must be one of ${[...APPLICATION_STATUSES].join(', ')}`);
+  }
   const result = run(
     `INSERT INTO applications (job_id, status, portal, resume_id, notes, applied_at, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [job_id, st, portal || null, resume_id || null, notes || null,
+    [job_id, st, portal ? clampText(portal, 200) : null, resume_id || null,
+     notes ? clampText(notes, 5000) : null,
      st === 'PENDING' ? null : nowIso(), nowIso()]
   );
   log('info', `application #${result.lastInsertRowid} created for job ${job_id} status=${st}`);
@@ -231,23 +253,27 @@ app.post('/api/applications', route((req, res) => {
 app.patch('/api/applications/:id', route((req, res) => {
   const existing = get('SELECT * FROM applications WHERE id = ?', [req.params.id]);
   if (!existing) throw httpError(404, 'Application not found');
+  const body = req.body || {};
   const updates = [];
   const params = [];
-  if (req.body.status !== undefined) {
+  if (body.status !== undefined) {
+    if (!APPLICATION_STATUSES.has(String(body.status))) {
+      throw httpError(400, `status must be one of ${[...APPLICATION_STATUSES].join(', ')}`);
+    }
     updates.push('status = ?');
-    params.push(String(req.body.status));
-    if (req.body.status !== 'PENDING' && !existing.applied_at) {
+    params.push(String(body.status));
+    if (body.status !== 'PENDING' && !existing.applied_at) {
       updates.push('applied_at = ?');
       params.push(nowIso());
     }
   }
-  if (req.body.notes !== undefined) {
+  if (body.notes !== undefined) {
     updates.push('notes = ?');
-    params.push(String(req.body.notes));
+    params.push(clampText(body.notes, 5000));
   }
-  if (req.body.portal !== undefined) {
+  if (body.portal !== undefined) {
     updates.push('portal = ?');
-    params.push(String(req.body.portal));
+    params.push(clampText(body.portal, 200));
   }
   if (!updates.length) throw httpError(400, 'Nothing to update');
   params.push(req.params.id);
@@ -256,7 +282,8 @@ app.patch('/api/applications/:id', route((req, res) => {
 }));
 
 function csvEscape(value) {
-  const s = value === null || value === undefined ? '' : String(value);
+  let s = value === null || value === undefined ? '' : String(value);
+  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
   if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
   return s;
 }
@@ -369,15 +396,15 @@ app.get('/api/profile', route((req, res) => {
 app.put('/api/profile', route((req, res) => {
   const { name, email, phone, location, headline, skills, url, salary_target, cover_letter } = req.body || {};
   const profile = {
-    name: name || '',
-    email: email || '',
-    phone: phone || '',
-    location: location || '',
-    headline: headline || '',
-    skills: Array.isArray(skills) ? skills : [],
-    url: url || '',
-    salary_target: salary_target || '',
-    cover_letter: cover_letter || ''
+    name: clampText(name, 200),
+    email: clampText(email, 320),
+    phone: clampText(phone, 50),
+    location: clampText(location, 200),
+    headline: clampText(headline, 500),
+    skills: Array.isArray(skills) ? skills.slice(0, 200).map((s) => clampText(s, 100)) : [],
+    url: clampText(url, 2000),
+    salary_target: clampText(salary_target, 100),
+    cover_letter: clampText(cover_letter, 20000)
   };
   setSetting('profile', profile);
   log('info', 'profile updated');
@@ -385,18 +412,37 @@ app.put('/api/profile', route((req, res) => {
 }));
 
 app.get('/api/settings', route((req, res) => {
-  const keys = ['llmMode', 'llmHost', 'llmModel', 'discordWebhook'];
   const out = {};
-  for (const k of keys) out[k] = getSetting(k, '');
+  for (const k of ['llmMode', 'llmHost', 'llmModel']) out[k] = getSetting(k, '');
+  out.discordWebhookSet = Boolean(getSetting('discordWebhook', ''));
   out.profile = getSetting('profile', {});
   res.json(out);
 }));
 
 app.put('/api/settings', route((req, res) => {
-  const keys = ['llmMode', 'llmHost', 'llmModel', 'discordWebhook'];
   const body = req.body || {};
-  for (const k of keys) {
-    if (body[k] !== undefined) setSetting(k, String(body[k]));
+  try {
+    if (body.llmMode !== undefined) {
+      const mode = String(body.llmMode);
+      if (mode !== 'ollama' && mode !== 'lmstudio') {
+        throw httpError(400, 'llmMode must be ollama or lmstudio');
+      }
+      setSetting('llmMode', mode);
+    }
+    if (body.llmHost !== undefined) {
+      const host = String(body.llmHost);
+      if (host) assertHttpUrl(host, 'LLM host');
+      setSetting('llmHost', host);
+    }
+    if (body.llmModel !== undefined) {
+      setSetting('llmModel', clampText(body.llmModel, 200));
+    }
+    if (body.discordWebhook !== undefined) {
+      const webhook = String(body.discordWebhook);
+      setSetting('discordWebhook', webhook ? assertDiscordWebhook(webhook) : '');
+    }
+  } catch (err) {
+    throw httpError(err.status || 400, err.message);
   }
   res.json({ ok: true });
 }));
@@ -466,9 +512,9 @@ process.on('uncaughtException', (err) => {
   process.exit(1);
 });
 
-const server = app.listen(PORT, () => {
-  log('info', `server listening on http://localhost:${PORT}`);
-  console.log(`JobHunt Coach running at http://localhost:${PORT}`);
+const server = app.listen(PORT, HOST, () => {
+  log('info', `server listening on http://${HOST}:${PORT}`);
+  console.log(`JobHunt Coach running at http://${HOST}:${PORT}`);
 });
 
 server.on('error', (err) => {

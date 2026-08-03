@@ -40,31 +40,40 @@ function stubFetch(impl) {
   return fn;
 }
 
+const WEBHOOK = 'https://discord.com/api/webhooks/123/abcdef';
+
 describe('sendDiscord', () => {
   it('rejects when no webhook url is given', async () => {
     await expect(sendDiscord('', 'hi')).rejects.toThrow('No Discord webhook URL configured');
   });
 
+  it('rejects a webhook url that is not a discord webhook', async () => {
+    const fetchMock = stubFetch(async () => ({ ok: true }));
+    await expect(sendDiscord('https://evil.test/hook', 'hi')).rejects.toThrow(
+      'Discord webhook must be an https://discord.com/api/webhooks/... URL'
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('posts the content as json', async () => {
     const fetchMock = stubFetch(async () => ({ ok: true }));
-    await expect(sendDiscord('https://discord.test/hook', 'hello')).resolves.toEqual({ ok: true });
+    await expect(sendDiscord(WEBHOOK, 'hello')).resolves.toEqual({ ok: true });
     const [url, opts] = fetchMock.mock.calls[0];
-    expect(url).toBe('https://discord.test/hook');
+    expect(url).toBe(WEBHOOK);
     expect(opts.method).toBe('POST');
     expect(JSON.parse(opts.body)).toEqual({ content: 'hello' });
   });
 
   it('truncates long content to the discord limit', async () => {
     const fetchMock = stubFetch(async () => ({ ok: true }));
-    await sendDiscord('https://discord.test/hook', 'x'.repeat(5000));
+    await sendDiscord(WEBHOOK, 'x'.repeat(5000));
     expect(JSON.parse(fetchMock.mock.calls[0][1].body).content).toHaveLength(1900);
   });
 
-  it('throws with the status and response body on failure', async () => {
+  it('throws with the status on failure without leaking the response body', async () => {
     stubFetch(async () => ({ ok: false, status: 429, text: async () => 'rate limited' }));
-    await expect(sendDiscord('https://discord.test/hook', 'hi')).rejects.toThrow(
-      'Discord webhook failed (429): rate limited'
-    );
+    await expect(sendDiscord(WEBHOOK, 'hi')).rejects.toThrow('Discord webhook failed (429)');
+    await expect(sendDiscord(WEBHOOK, 'hi')).rejects.not.toThrow('rate limited');
   });
 });
 
@@ -98,17 +107,17 @@ describe('sendDailyDigest', () => {
   });
 
   it('sends the digest and logs success', async () => {
-    state.webhook = { value: JSON.stringify('https://discord.test/hook') };
+    state.webhook = { value: JSON.stringify(WEBHOOK) };
     const fetchMock = stubFetch(async () => ({ ok: true }));
     await expect(sendDailyDigest()).resolves.toEqual({ ok: true });
-    expect(fetchMock.mock.calls[0][0]).toBe('https://discord.test/hook');
+    expect(fetchMock.mock.calls[0][0]).toBe(WEBHOOK);
     expect(logCalls).toContainEqual(['info', 'daily digest sent to Discord']);
   });
 
   it('logs and rethrows when the webhook call fails', async () => {
-    state.webhook = { value: JSON.stringify('https://discord.test/hook') };
+    state.webhook = { value: JSON.stringify(WEBHOOK) };
     stubFetch(async () => ({ ok: false, status: 500, text: async () => 'boom' }));
-    await expect(sendDailyDigest()).rejects.toThrow('Discord webhook failed (500): boom');
+    await expect(sendDailyDigest()).rejects.toThrow('Discord webhook failed (500)');
     expect(logCalls.some(([level]) => level === 'error')).toBe(true);
   });
 });

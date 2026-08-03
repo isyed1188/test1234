@@ -1,4 +1,5 @@
 import { getSetting } from './database.js';
+import { assertHttpUrl } from './validate.js';
 import { fetchWithTimeout } from './http.js';
 
 export function getLlamaConfig() {
@@ -20,6 +21,7 @@ export function getLlamaConfig() {
 export async function generate(prompt, timeoutMs = 90000) {
   const cfg = getLlamaConfig();
   if (!cfg.host) throw new Error('No LLM host configured (set it in Notifications & Settings)');
+  assertHttpUrl(cfg.host, 'LLM host');
   const host = cfg.host.replace(/\/$/, '');
   const isLmStudio = cfg.mode === 'lmstudio';
   const url = isLmStudio ? `${host}/chat/completions` : `${host}/api/generate`;
@@ -46,6 +48,7 @@ export async function checkHealth() {
   const host = cfg.host.replace(/\/$/, '');
   const url = cfg.mode === 'lmstudio' ? `${host}/models` : `${host}/api/tags`;
   try {
+    assertHttpUrl(cfg.host, 'LLM host');
     const res = await fetchWithTimeout(url, { timeoutMs: 5000 });
     return { ok: res.ok, status: res.status, config: cfg };
   } catch (err) {
