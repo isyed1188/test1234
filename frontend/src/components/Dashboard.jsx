@@ -19,7 +19,7 @@ export default function Dashboard({ onGo }) {
 
   useEffect(() => {
     api('/api/stats').then(setStats).catch((e) => setError(e.message));
-    api('/api/jobs?status=applied').then(setRecent).catch(() => {});
+    api('/api/jobs?status=applied').then(setRecent).catch((e) => setError(e.message));
   }, []);
 
   if (!stats) {
@@ -30,6 +30,7 @@ export default function Dashboard({ onGo }) {
 
   return (
     <div className="stack">
+      {error && <div className="notice error small">{error}</div>}
       <div className="card padded">
         <h2>Welcome to your job hunt command center</h2>
         <p className="muted">

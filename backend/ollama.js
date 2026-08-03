@@ -20,6 +20,7 @@ export function getLlamaConfig() {
 
 export async function generate(prompt, timeoutMs = 90000) {
   const cfg = getLlamaConfig();
+  if (!cfg.host) throw new Error('No LLM host configured (set it in Notifications & Settings)');
   assertHttpUrl(cfg.host, 'LLM host');
   const host = cfg.host.replace(/\/$/, '');
   const isLmStudio = cfg.mode === 'lmstudio';
@@ -43,6 +44,7 @@ export async function generate(prompt, timeoutMs = 90000) {
 
 export async function checkHealth() {
   const cfg = getLlamaConfig();
+  if (!cfg.host) return { ok: false, status: 0, config: cfg, error: 'No LLM host configured' };
   const host = cfg.host.replace(/\/$/, '');
   const url = cfg.mode === 'lmstudio' ? `${host}/models` : `${host}/api/tags`;
   try {

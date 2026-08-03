@@ -20,7 +20,7 @@ export default function NotificationsPanel() {
       });
       setWebhookSet(Boolean(s.discordWebhookSet));
       setLoaded(true);
-    }).catch(() => {});
+    }).catch((e) => setMessage(`Error loading settings: ${e.message}`));
   }, []);
 
   function set(key, value) {
@@ -79,7 +79,13 @@ export default function NotificationsPanel() {
     }
   }
 
-  if (!loaded) return <div className="card padded">Loading...</div>;
+  if (!loaded) {
+    return (
+      <div className="card padded">
+        {message.startsWith('Error') ? message : 'Loading...'}
+      </div>
+    );
+  }
 
   return (
     <div className="stack">

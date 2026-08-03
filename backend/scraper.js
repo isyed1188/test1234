@@ -1,5 +1,5 @@
 import { all, run, log, getSetting } from './database.js';
-import { fetchWithTimeout, fetchJson, postJson } from './http.js';
+import { fetchWithTimeout, fetchJson, postJson, responseError } from './http.js';
 import { assertSlug } from './validate.js';
 
 const GREENHOUSE_SOURCES = [
@@ -249,6 +249,7 @@ export async function importAll(sources, keyword) {
       results.greenhouse[company] = n;
     } catch (err) {
       results.greenhouse[company] = `error: ${err.message}`;
+      log('error', `import failed greenhouse/${company}: ${err.message}`);
     }
   }
   for (const company of lvCompanies) {
@@ -257,6 +258,7 @@ export async function importAll(sources, keyword) {
       results.lever[company] = n;
     } catch (err) {
       results.lever[company] = `error: ${err.message}`;
+      log('error', `import failed lever/${company}: ${err.message}`);
     }
   }
   for (const company of wdCompanies) {
@@ -264,12 +266,14 @@ export async function importAll(sources, keyword) {
       const cfg = WORKDAY_SOURCES.find((c) => c.slug === company);
       if (!cfg) {
         results.workday[company] = 'error: unknown board';
+        log('error', `import failed workday/${company}: unknown board`);
         continue;
       }
       const n = await importWorkday(cfg, keyword, profile);
       results.workday[company] = n;
     } catch (err) {
       results.workday[company] = `error: ${err.message}`;
+      log('error', `import failed workday/${company}: ${err.message}`);
     }
   }
   log('info', `importAll complete: greenhouse=${JSON.stringify(results.greenhouse)} lever=${JSON.stringify(results.lever)} workday=${JSON.stringify(results.workday)}`);
@@ -298,7 +302,10 @@ function applyEnrichment(row, { title, content, location, url }) {
 
 async function enrichGreenhouseJob(row) {
   const m = row.external_id.match(/^gh-(.+)-(\d+)$/);
-  if (!m) return false;
+  if (!m) {
+    log('error', `cannot enrich ${row.external_id}: not a Greenhouse job id`);
+    return false;
+  }
   const company = m[1];
   const jobId = m[2];
   try {
@@ -317,6 +324,7 @@ async function enrichGreenhouseJob(row) {
     });
     return true;
   } catch (err) {
+    log('error', `enrich failed ${row.external_id}: ${err.message}`);
     run('UPDATE jobs SET fetched_at = ? WHERE id = ?', [new Date().toISOString(), row.id]);
     return false;
   }
@@ -327,32 +335,43 @@ function extractLdJson(html) {
   if (!m) return null;
   try {
     return JSON.parse(m[1].replace(/&amp;/g, '&'));
-  } catch {
+  } catch (err) {
+    log('error', `job page had malformed JSON-LD: ${err.message}`);
     return null;
   }
 }
 
 async function enrichWorkdayJob(row) {
   const m = row.external_id.match(/^wd-([^-]+)-(.+)$/);
-  if (!m) return false;
+  if (!m) {
+    log('error', `cannot enrich ${row.external_id}: not a Workday job id`);
+    return false;
+  }
   const cfg = WORKDAY_SOURCES.find((c) => c.slug === m[1]);
-  if (!cfg) return false;
+  if (!cfg) {
+    log('error', `cannot enrich ${row.external_id}: unknown Workday board "${m[1]}"`);
+    return false;
+  }
   try {
     if (new URL(row.url).hostname !== cfg.domain) return false;
     const res = await fetchWithTimeout(row.url, {
       timeoutMs: 20000,
       headers: { 'User-Agent': 'Mozilla/5.0' }
     });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) throw await responseError(res, row.url);
     const html = await res.text();
     const data = extractLdJson(html);
-    if (!data || !data.description) return false;
+    if (!data || !data.description) {
+      log('error', `enrich failed ${row.external_id}: job page had no JSON-LD description`);
+      return false;
+    }
     const content = stripHtml(data.description);
     const title = data.title || row.title || '';
     const location = data.jobLocation?.address?.addressLocality || row.location || '';
     applyEnrichment(row, { title, content, location });
     return true;
   } catch (err) {
+    log('error', `enrich failed ${row.external_id}: ${err.message}`);
     return false;
   }
 }
@@ -388,10 +407,11 @@ async function enrichOnce() {
 }
 
 export function startEnricher() {
-  setInterval(() => {
-    enrichOnce().catch(() => {});
-  }, 4000);
-  setTimeout(() => enrichOnce().catch(() => {}), 1000);
+  const tick = () => enrichOnce().catch((err) => {
+    log('error', `enricher tick failed: ${err.stack || err.message}`);
+  });
+  setInterval(tick, 4000);
+  setTimeout(tick, 1000);
   log('info', 'background job description enricher started');
 }
 

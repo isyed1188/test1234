@@ -3,15 +3,30 @@ export async function api(path, options = {}) {
   if (opts.body && typeof opts.body !== 'string') {
     opts.body = JSON.stringify(opts.body);
   }
-  const res = await fetch(path, {
-    headers: { 'Content-Type': 'application/json' },
-    ...opts
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || `Request failed (${res.status})`);
+  let res;
+  try {
+    res = await fetch(path, {
+      headers: { 'Content-Type': 'application/json' },
+      ...opts
+    });
+  } catch (err) {
+    throw new Error(`Cannot reach the server (${err.message}). Is it still running?`);
   }
-  return res.json();
+  const text = await res.text();
+  let body = null;
+  if (text) {
+    try {
+      body = JSON.parse(text);
+    } catch {
+      // A non-JSON body means a proxy or crash page, not our API.
+      if (res.ok) throw new Error(`Unexpected non-JSON response from ${path}`);
+      throw new Error(`Request failed (${res.status}): ${text.slice(0, 200)}`);
+    }
+  }
+  if (!res.ok) {
+    throw new Error(body?.error || `Request failed (${res.status} ${res.statusText})`);
+  }
+  return body;
 }
 
 export function fmtMoney(value) {

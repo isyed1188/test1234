@@ -5,7 +5,10 @@ import fs from 'node:fs/promises';
 
 const generate = vi.fn();
 
-vi.mock('../backend/database.js', () => ({ getSetting: (_key, fallback = null) => fallback }));
+vi.mock('../backend/database.js', () => ({
+  getSetting: (_key, fallback = null) => fallback,
+  log: () => {}
+}));
 
 vi.mock('../backend/ollama.js', async (importOriginal) => {
   const actual = await importOriginal();
