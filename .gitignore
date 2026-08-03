@@ -4,3 +4,4 @@ uploads/
 public/
 .env
 *.log
+coverage/

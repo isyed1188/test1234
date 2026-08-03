@@ -1,5 +1,5 @@
-import { get, all, run, log } from './database.js';
-import { describeFetchError, responseError } from './httpClient.js';
+import { all, run, log, getSetting } from './database.js';
+import { fetchWithTimeout, fetchJson, postJson, responseError } from './http.js';
 
 const GREENHOUSE_SOURCES = [
   'gitlab', 'datadog', 'coinbase', 'reddit', 'dropbox',
@@ -82,42 +82,6 @@ function relevanceScore(profile, title, content) {
   return Math.min(100, Math.round((hits / skills.length) * 100));
 }
 
-async function fetchJson(url, timeoutMs = 20000) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const res = await fetch(url, {
-      signal: controller.signal,
-      headers: { 'User-Agent': 'JobHuntCoach/1.0' }
-    });
-    if (!res.ok) throw await responseError(res, url);
-    return await res.json();
-  } catch (err) {
-    throw describeFetchError(err, url, timeoutMs);
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-async function postJson(url, body, timeoutMs = 60000) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const res = await fetch(url, {
-      method: 'POST',
-      signal: controller.signal,
-      headers: { 'Content-Type': 'application/json', 'User-Agent': 'JobHuntCoach/1.0' },
-      body: JSON.stringify(body)
-    });
-    if (!res.ok) throw await responseError(res, url);
-    return await res.json();
-  } catch (err) {
-    throw describeFetchError(err, url, timeoutMs);
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 function saveJob(job) {
   try {
     const result = run(
@@ -148,14 +112,7 @@ function saveJob(job) {
 }
 
 function loadProfile() {
-  const row = get('SELECT value FROM settings WHERE key = ?', ['profile']);
-  if (!row) return {};
-  try {
-    return JSON.parse(row.value);
-  } catch (err) {
-    log('error', `stored profile is not valid JSON, scoring without it: ${err.message}`);
-    return {};
-  }
+  return getSetting('profile', {});
 }
 
 async function importGreenhouse(company, keyword, profile) {
@@ -288,8 +245,8 @@ export async function importAll(sources, keyword) {
       const n = await importGreenhouse(company, keyword, profile);
       results.greenhouse[company] = n;
     } catch (err) {
-      log('error', `import greenhouse/${company} failed: ${err.message}`);
       results.greenhouse[company] = `error: ${err.message}`;
+      log('error', `import failed greenhouse/${company}: ${err.message}`);
     }
   }
   for (const company of lvCompanies) {
@@ -297,33 +254,53 @@ export async function importAll(sources, keyword) {
       const n = await importLever(company, keyword, profile);
       results.lever[company] = n;
     } catch (err) {
-      log('error', `import lever/${company} failed: ${err.message}`);
       results.lever[company] = `error: ${err.message}`;
+      log('error', `import failed lever/${company}: ${err.message}`);
     }
   }
   for (const company of wdCompanies) {
     try {
       const cfg = WORKDAY_SOURCES.find((c) => c.slug === company);
       if (!cfg) {
-        log('error', `import workday/${company} skipped: unknown board`);
         results.workday[company] = 'error: unknown board';
+        log('error', `import failed workday/${company}: unknown board`);
         continue;
       }
       const n = await importWorkday(cfg, keyword, profile);
       results.workday[company] = n;
     } catch (err) {
-      log('error', `import workday/${company} failed: ${err.message}`);
       results.workday[company] = `error: ${err.message}`;
+      log('error', `import failed workday/${company}: ${err.message}`);
     }
   }
   log('info', `importAll complete: greenhouse=${JSON.stringify(results.greenhouse)} lever=${JSON.stringify(results.lever)} workday=${JSON.stringify(results.workday)}`);
   return results;
 }
 
+function applyEnrichment(row, { title, content, location, url }) {
+  const salary = parseSalary(content);
+  const fields = {
+    description: content.slice(0, 20000),
+    location,
+    work_mode: detectWorkMode(title, location, content),
+    experience_level: detectExperience(title, content),
+    salary_min: salary?.min ?? null,
+    salary_max: salary?.max ?? null,
+    salary_currency: 'USD',
+    relevance_score: relevanceScore(loadProfile(), title, content)
+  };
+  if (url !== undefined) fields.url = url;
+  const cols = Object.keys(fields);
+  run(
+    `UPDATE jobs SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE id = ?`,
+    [...cols.map((c) => fields[c]), row.id]
+  );
+}
+
 async function enrichGreenhouseJob(row) {
   const m = row.external_id.match(/^gh-(.+)-(\d+)$/);
   if (!m) {
-    log('error', `enrich skipped, unparseable external_id ${row.external_id}`);
+    log('error', `cannot enrich ${row.external_id}: not a Greenhouse job id`);
     return false;
   }
   const company = m[1];
@@ -333,39 +310,27 @@ async function enrichGreenhouseJob(row) {
     const title = data.title || row.title || '';
     const content = stripHtml(data.content);
     const location = data.location?.name || row.location || '';
-    const salary = parseSalary(content);
-    const profile = loadProfile();
-    run(
-      `UPDATE jobs SET
-        description = ?, location = ?, work_mode = ?, experience_level = ?,
-        salary_min = ?, salary_max = ?, salary_currency = ?, url = ?, relevance_score = ?
-       WHERE id = ?`,
-      [
-        content.slice(0, 20000), location,
-        detectWorkMode(title, location, content),
-        detectExperience(title, content),
-        salary?.min ?? null, salary?.max ?? null, 'USD',
-        data.absolute_url || row.url || '',
-        relevanceScore(profile, title, content),
-        row.id
-      ]
-    );
+    applyEnrichment(row, {
+      title,
+      content,
+      location,
+      url: data.absolute_url || row.url || ''
+    });
     return true;
   } catch (err) {
-    log('error', `enrich greenhouse ${row.external_id} failed: ${err.message}`);
-    // Bump fetched_at so the retry loop rotates on to other rows.
+    log('error', `enrich failed ${row.external_id}: ${err.message}`);
     run('UPDATE jobs SET fetched_at = ? WHERE id = ?', [new Date().toISOString(), row.id]);
     return false;
   }
 }
 
-function extractLdJson(html, sourceUrl) {
+function extractLdJson(html) {
   const m = html.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/);
   if (!m) return null;
   try {
     return JSON.parse(m[1].replace(/&amp;/g, '&'));
   } catch (err) {
-    log('error', `invalid ld+json on ${sourceUrl}: ${err.message}`);
+    log('error', `job page had malformed JSON-LD: ${err.message}`);
     return null;
   }
 }
@@ -373,59 +338,34 @@ function extractLdJson(html, sourceUrl) {
 async function enrichWorkdayJob(row) {
   const m = row.external_id.match(/^wd-([^-]+)-(.+)$/);
   if (!m) {
-    log('error', `enrich skipped, unparseable external_id ${row.external_id}`);
+    log('error', `cannot enrich ${row.external_id}: not a Workday job id`);
     return false;
   }
   const cfg = WORKDAY_SOURCES.find((c) => c.slug === m[1]);
   if (!cfg) {
-    log('error', `enrich skipped, unknown Workday board "${m[1]}" for ${row.external_id}`);
+    log('error', `cannot enrich ${row.external_id}: unknown Workday board "${m[1]}"`);
     return false;
   }
-  const timeoutMs = 20000;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    let res;
-    try {
-      res = await fetch(row.url, {
-        signal: controller.signal,
-        headers: { 'User-Agent': 'Mozilla/5.0' }
-      });
-    } catch (err) {
-      throw describeFetchError(err, row.url, timeoutMs);
-    }
+    const res = await fetchWithTimeout(row.url, {
+      timeoutMs: 20000,
+      headers: { 'User-Agent': 'Mozilla/5.0' }
+    });
     if (!res.ok) throw await responseError(res, row.url);
     const html = await res.text();
-    const data = extractLdJson(html, row.url);
+    const data = extractLdJson(html);
     if (!data || !data.description) {
-      log('info', `enrich workday ${row.external_id}: no job description in page markup`);
+      log('error', `enrich failed ${row.external_id}: job page had no JSON-LD description`);
       return false;
     }
     const content = stripHtml(data.description);
     const title = data.title || row.title || '';
     const location = data.jobLocation?.address?.addressLocality || row.location || '';
-    const salary = parseSalary(content);
-    const profile = loadProfile();
-    run(
-      `UPDATE jobs SET
-        description = ?, location = ?, work_mode = ?, experience_level = ?,
-        salary_min = ?, salary_max = ?, salary_currency = ?, relevance_score = ?
-       WHERE id = ?`,
-      [
-        content.slice(0, 20000), location,
-        detectWorkMode(title, location, content),
-        detectExperience(title, content),
-        salary?.min ?? null, salary?.max ?? null, 'USD',
-        relevanceScore(profile, title, content),
-        row.id
-      ]
-    );
+    applyEnrichment(row, { title, content, location });
     return true;
   } catch (err) {
-    log('error', `enrich workday ${row.external_id} failed: ${err.message}`);
+    log('error', `enrich failed ${row.external_id}: ${err.message}`);
     return false;
-  } finally {
-    clearTimeout(timer);
   }
 }
 

@@ -80,8 +80,12 @@ export async function tailorResume(content, job) {
 
   const raw = await generate(prompt);
   const parsed = extractJson(raw);
-  if (parsed instanceof Error) {
-    throw new Error(`AI response could not be used: ${parsed.message}`);
+  if (!parsed) {
+    throw new Error(
+      raw
+        ? `Could not parse AI response into JSON: ${raw.slice(0, 200)}`
+        : 'Could not parse AI response into JSON: the model returned nothing'
+    );
   }
   const summary = String(parsed.summary || '').trim();
   const skills = String(parsed.skills || '').trim();

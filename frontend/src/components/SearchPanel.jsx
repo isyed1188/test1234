@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api, fmtMoney, fmtDate } from '../api.js';
+import { api, fmtSalaryRange, fmtDate } from '../api.js';
 import JobDetailModal from './JobDetailModal.jsx';
 
 const SALARY_BUCKETS = [
@@ -202,7 +202,7 @@ export default function SearchPanel() {
                   <td>{j.company}</td>
                   <td>{j.work_mode}</td>
                   <td>{j.experience_level}</td>
-                  <td>{j.salary_max ? `${fmtMoney(j.salary_min)} - ${fmtMoney(j.salary_max)}` : (j.salary_min ? fmtMoney(j.salary_min) : '-')}</td>
+                  <td>{fmtSalaryRange(j.salary_min, j.salary_max)}</td>
                   <td><span className={`score score-${j.relevance_score >= 50 ? 'hi' : j.relevance_score >= 25 ? 'mid' : 'lo'}`}>{j.relevance_score}%</span></td>
                   <td>{j.source}</td>
                   <td>{j.application_status ? <span className={`pill status-${j.application_status.toLowerCase()}`}>{j.application_status}</span> : <span className="muted">new</span>}</td>
