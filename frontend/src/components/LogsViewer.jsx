@@ -4,13 +4,17 @@ import { api, fmtDate } from '../api.js';
 export default function LogsViewer() {
   const [logs, setLogs] = useState([]);
   const [auto, setAuto] = useState(true);
+  const [error, setError] = useState('');
 
   useEffect(() => {
     let timer;
     const tick = async () => {
       try {
         setLogs(await api('/api/logs?limit=300'));
-      } catch { /* ignore */ }
+        setError('');
+      } catch (e) {
+        setError(`Could not fetch logs: ${e.message}`);
+      }
       if (auto) timer = setTimeout(tick, 3000);
     };
     tick();
@@ -26,6 +30,7 @@ export default function LogsViewer() {
           auto-refresh
         </label>
       </div>
+      {error && <div className="notice error small">{error}</div>}
       <pre className="log-view">
         {logs.length === 0 ? 'No logs yet.' : logs.map((l) => (
           <div key={l.id} className={`log-line log-${l.level}`}>

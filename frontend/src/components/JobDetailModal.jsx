@@ -9,7 +9,7 @@ export default function JobDetailModal({ jobId, onClose, onAction }) {
 
   useEffect(() => {
     api(`/api/jobs/${jobId}`).then(setJob).catch((e) => setError(e.message));
-    api('/api/resumes').then(setResumes).catch(() => {});
+    api('/api/resumes').then(setResumes).catch((e) => setError(`Could not load resumes: ${e.message}`));
   }, [jobId]);
 
   if (!job) {
@@ -69,6 +69,7 @@ export default function JobDetailModal({ jobId, onClose, onAction }) {
         </div>
 
         <div className="modal-body">
+          {error && <div className="notice error small">{error}</div>}
           <div className="chips">
             <span className={`pill ${job.work_mode ? 'mode-' + job.work_mode.toLowerCase() : ''}`}>{job.work_mode}</span>
             <span className="pill">{job.experience_level}</span>

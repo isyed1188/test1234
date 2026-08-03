@@ -3,12 +3,21 @@ import { api } from '../api.js';
 
 export default function Header({ tabs, active, onSelect }) {
   const [llm, setLlm] = useState(null);
+  const [healthError, setHealthError] = useState('');
 
   useEffect(() => {
     let alive = true;
     api('/api/health')
-      .then((h) => alive && setLlm(h.llm))
-      .catch(() => alive && setLlm(null));
+      .then((h) => {
+        if (!alive) return;
+        setLlm(h.llm);
+        setHealthError(h.llm?.ok ? '' : h.llm?.error || '');
+      })
+      .catch((e) => {
+        if (!alive) return;
+        setLlm(null);
+        setHealthError(e.message);
+      });
     return () => { alive = false; };
   }, []);
 
@@ -30,7 +39,10 @@ export default function Header({ tabs, active, onSelect }) {
           </button>
         ))}
       </nav>
-      <div className={`llm-badge ${llm && llm.ok ? 'online' : 'offline'}`}>
+      <div
+        className={`llm-badge ${llm && llm.ok ? 'online' : 'offline'}`}
+        title={healthError || undefined}
+      >
         <span className="llm-dot" />
         {llm && llm.ok ? `${llm.config.mode} · ${llm.config.model}` : 'local AI offline'}
       </div>

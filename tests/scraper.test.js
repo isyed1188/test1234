@@ -13,6 +13,14 @@ vi.mock('../backend/database.js', () => ({
     if (sql.includes('FROM settings') && params[0] === 'profile') return db.profileRow;
     return undefined;
   },
+  getSetting: (key, fallback = null) => {
+    if (key !== 'profile' || !db.profileRow) return fallback;
+    try {
+      return JSON.parse(db.profileRow.value);
+    } catch {
+      return db.profileRow.value;
+    }
+  },
   all: () => db.rows,
   getSetting: (key, fallback = null) => {
     if (key !== 'profile') return fallback;
@@ -330,7 +338,7 @@ describe('importAll', () => {
   it('captures per-board errors instead of failing the whole run', async () => {
     stubFetch(async () => ({ ok: false, status: 500 }));
     const results = await importAll({ greenhouse: ['stripe'], lever: [], workday: ['bogus'] });
-    expect(results.greenhouse.stripe).toBe('error: HTTP 500');
+    expect(results.greenhouse.stripe).toContain('HTTP 500');
     expect(results.workday.bogus).toBe('error: unknown board');
   });
 

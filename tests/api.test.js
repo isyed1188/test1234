@@ -13,7 +13,7 @@ function stubFetch(impl) {
 
 describe('api', () => {
   it('serializes non-string bodies and returns parsed json', async () => {
-    const fetchMock = stubFetch(async () => ({ ok: true, json: async () => ({ hello: 'world' }) }));
+    const fetchMock = stubFetch(async () => ({ ok: true, text: async () => '{"hello":"world"}' }));
     const result = await api('/api/jobs', { method: 'POST', body: { a: 1 } });
     expect(result).toEqual({ hello: 'world' });
     const [path, opts] = fetchMock.mock.calls[0];
@@ -23,25 +23,36 @@ describe('api', () => {
   });
 
   it('leaves string bodies untouched', async () => {
-    const fetchMock = stubFetch(async () => ({ ok: true, json: async () => ({}) }));
+    const fetchMock = stubFetch(async () => ({ ok: true, text: async () => '{}' }));
     await api('/api/jobs', { body: 'raw' });
     expect(fetchMock.mock.calls[0][1].body).toBe('raw');
   });
 
   it('throws the server-provided error message', async () => {
-    stubFetch(async () => ({ ok: false, status: 400, json: async () => ({ error: 'bad input' }) }));
+    stubFetch(async () => ({ ok: false, status: 400, text: async () => '{"error":"bad input"}' }));
     await expect(api('/api/jobs')).rejects.toThrow('bad input');
   });
 
-  it('falls back to a status message when the error body is not json', async () => {
-    stubFetch(async () => ({
-      ok: false,
-      status: 500,
-      json: async () => {
-        throw new Error('not json');
-      }
-    }));
-    await expect(api('/api/jobs')).rejects.toThrow('Request failed (500)');
+  it('reports the status and body when the error response is not json', async () => {
+    stubFetch(async () => ({ ok: false, status: 502, statusText: 'Bad Gateway', text: async () => '<html>nginx</html>' }));
+    await expect(api('/api/jobs')).rejects.toThrow('Request failed (502): <html>nginx</html>');
+  });
+
+  it('falls back to the status when the error response has no body', async () => {
+    stubFetch(async () => ({ ok: false, status: 500, statusText: 'Internal Server Error', text: async () => '' }));
+    await expect(api('/api/jobs')).rejects.toThrow('Request failed (500 Internal Server Error)');
+  });
+
+  it('reports a non-json success response instead of a parse error', async () => {
+    stubFetch(async () => ({ ok: true, text: async () => 'not json at all' }));
+    await expect(api('/api/jobs')).rejects.toThrow('Unexpected non-JSON response from /api/jobs');
+  });
+
+  it('reports an unreachable server', async () => {
+    stubFetch(async () => {
+      throw new TypeError('fetch failed');
+    });
+    await expect(api('/api/jobs')).rejects.toThrow('Cannot reach the server (fetch failed)');
   });
 });
 

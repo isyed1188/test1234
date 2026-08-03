@@ -89,11 +89,16 @@ export function run(sql, params = []) {
 }
 
 export function log(level, message) {
-  run('INSERT INTO logs (level, message, ts) VALUES (?, ?, ?)', [level, message, new Date().toISOString()]);
-  const MAX = 2000;
-  const count = get('SELECT COUNT(*) AS c FROM logs');
-  if (count.c > MAX) {
-    run('DELETE FROM logs WHERE id NOT IN (SELECT id FROM logs ORDER BY id DESC LIMIT ?)', [MAX]);
+  if (level === 'error') console.error(`[${level}] ${message}`);
+  try {
+    run('INSERT INTO logs (level, message, ts) VALUES (?, ?, ?)', [level, message, new Date().toISOString()]);
+    const MAX = 2000;
+    const count = get('SELECT COUNT(*) AS c FROM logs');
+    if (count.c > MAX) {
+      run('DELETE FROM logs WHERE id NOT IN (SELECT id FROM logs ORDER BY id DESC LIMIT ?)', [MAX]);
+    }
+  } catch (err) {
+    console.error(`[log] could not persist log entry (${level}: ${message}): ${err.message}`);
   }
 }
 

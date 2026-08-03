@@ -4,6 +4,7 @@ import { Send } from 'lucide-react';
 
 export default function NotificationsPanel() {
   const [settings, setSettings] = useState({ llmMode: 'ollama', llmHost: '', llmModel: '', discordWebhook: '' });
+  const [webhookSet, setWebhookSet] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
@@ -15,10 +16,11 @@ export default function NotificationsPanel() {
         llmMode: s.llmMode || 'ollama',
         llmHost: s.llmHost || '',
         llmModel: s.llmModel || '',
-        discordWebhook: s.discordWebhook || ''
+        discordWebhook: ''
       });
+      setWebhookSet(Boolean(s.discordWebhookSet));
       setLoaded(true);
-    }).catch(() => {});
+    }).catch((e) => setMessage(`Error loading settings: ${e.message}`));
   }, []);
 
   function set(key, value) {
@@ -29,9 +31,34 @@ export default function NotificationsPanel() {
     setSaving(true);
     setMessage('');
     try {
-      await api('/api/settings', { method: 'PUT', body: settings });
+      const body = {
+        llmMode: settings.llmMode,
+        llmHost: settings.llmHost,
+        llmModel: settings.llmModel
+      };
+      if (settings.discordWebhook) body.discordWebhook = settings.discordWebhook;
+      await api('/api/settings', { method: 'PUT', body });
+      if (settings.discordWebhook) {
+        setWebhookSet(true);
+        set('discordWebhook', '');
+      }
       setMessage('Settings saved');
       setTimeout(() => setMessage(''), 2000);
+    } catch (e) {
+      setMessage(`Error: ${e.message}`);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function removeWebhook() {
+    setSaving(true);
+    setMessage('');
+    try {
+      await api('/api/settings', { method: 'PUT', body: { discordWebhook: '' } });
+      setWebhookSet(false);
+      set('discordWebhook', '');
+      setMessage('Webhook removed');
     } catch (e) {
       setMessage(`Error: ${e.message}`);
     } finally {
@@ -52,7 +79,13 @@ export default function NotificationsPanel() {
     }
   }
 
-  if (!loaded) return <div className="card padded">Loading...</div>;
+  if (!loaded) {
+    return (
+      <div className="card padded">
+        {message.startsWith('Error') ? message : 'Loading...'}
+      </div>
+    );
+  }
 
   return (
     <div className="stack">
@@ -85,11 +118,16 @@ export default function NotificationsPanel() {
         <label>Webhook URL
           <input
             className="input"
+            type="password"
+            autoComplete="off"
             value={settings.discordWebhook}
             onChange={(e) => set('discordWebhook', e.target.value)}
-            placeholder="https://discord.com/api/webhooks/..."
+            placeholder={webhookSet ? 'Saved - enter a new URL to replace it' : 'https://discord.com/api/webhooks/...'}
           />
         </label>
+        <p className="muted small">
+          {webhookSet ? 'A webhook is configured. The saved URL is never sent back to the browser.' : 'No webhook configured yet.'}
+        </p>
         <div className="row gap mt">
           <button className="btn" disabled={busy !== ''} onClick={() => run('test')}>
             <Send size={15} /> {busy === 'test' ? 'Sending...' : 'Send test message'}
@@ -97,6 +135,9 @@ export default function NotificationsPanel() {
           <button className="btn primary" disabled={busy !== ''} onClick={() => run('digest')}>
             {busy === 'digest' ? 'Sending...' : 'Send daily digest'}
           </button>
+          {webhookSet && (
+            <button className="btn" disabled={saving} onClick={removeWebhook}>Remove webhook</button>
+          )}
         </div>
       </div>
 

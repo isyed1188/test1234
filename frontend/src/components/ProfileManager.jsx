@@ -17,7 +17,7 @@ export default function ProfileManager() {
       const merged = { ...EMPTY, ...p };
       setProfile(merged);
       setSkillsText((merged.skills || []).join(', '));
-    }).catch(() => {});
+    }).catch((e) => setError(`Could not load your profile: ${e.message}`));
   }, []);
 
   function set(key, value) {

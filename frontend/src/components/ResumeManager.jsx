@@ -13,8 +13,16 @@ export default function ResumeManager() {
   const fileRef = useRef(null);
 
   async function load() {
-    setResumes(await api('/api/resumes').catch(() => []));
-    setJobs(await api('/api/jobs?status=saved&limit=100').catch(() => []));
+    try {
+      const [nextResumes, nextJobs] = await Promise.all([
+        api('/api/resumes'),
+        api('/api/jobs?status=saved&limit=100')
+      ]);
+      setResumes(nextResumes);
+      setJobs(nextJobs);
+    } catch (e) {
+      setError(`Could not load resumes and jobs: ${e.message}`);
+    }
   }
 
   useEffect(() => { load(); }, []);
@@ -27,8 +35,14 @@ export default function ResumeManager() {
     setError('');
     try {
       const res = await fetch('/api/resumes/upload', { method: 'POST', body: fd });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error || 'Upload failed');
+      const text = await res.text();
+      let body = null;
+      try {
+        body = text ? JSON.parse(text) : null;
+      } catch {
+        throw new Error(`Upload failed (${res.status}): ${text.slice(0, 200)}`);
+      }
+      if (!res.ok) throw new Error(body?.error || `Upload failed (${res.status})`);
       setNotice(`Uploaded ${body.original_name} (${body.content.length} chars parsed)`);
       load();
     } catch (e) {
@@ -40,8 +54,13 @@ export default function ResumeManager() {
   }
 
   async function setBaseline(id) {
-    await api(`/api/resumes/${id}/baseline`, { method: 'POST' });
-    load();
+    setError('');
+    try {
+      await api(`/api/resumes/${id}/baseline`, { method: 'POST' });
+      load();
+    } catch (e) {
+      setError(`Could not set baseline: ${e.message}`);
+    }
   }
 
   async function tailor(id) {

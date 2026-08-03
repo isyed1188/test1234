@@ -1,15 +1,18 @@
-import { all, get, getSetting, log } from './database.js';
+import { all, get, log } from './database.js';
+import { assertDiscordWebhook } from './validate.js';
 import { fetchWithTimeout } from './http.js';
 
 export async function sendDiscord(webhookUrl, content) {
   if (!webhookUrl) throw new Error('No Discord webhook URL configured');
+  assertDiscordWebhook(webhookUrl);
   const res = await fetchWithTimeout(webhookUrl, {
     method: 'POST',
     timeoutMs: 15000,
+    label: 'Discord webhook',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ content: String(content).slice(0, 1900) })
   });
-  if (!res.ok) throw new Error(`Discord webhook failed (${res.status}): ${await res.text()}`);
+  if (!res.ok) throw new Error(`Discord webhook failed (${res.status})`);
   return { ok: true };
 }
 
@@ -53,8 +56,15 @@ export function buildDigestMessage() {
 }
 
 export async function sendDailyDigest() {
-  const url = getSetting('discordWebhook', '');
-  if (!url) throw new Error('No Discord webhook URL configured');
+  const webhookUrl = get('SELECT value FROM settings WHERE key = ?', ['discordWebhook']);
+  if (!webhookUrl) throw new Error('No Discord webhook URL configured');
+  let url;
+  try {
+    url = JSON.parse(webhookUrl.value);
+  } catch (err) {
+    log('error', `stored Discord webhook is not valid JSON: ${err.message}`);
+    throw new Error('Stored Discord webhook setting is corrupt — re-save it in Settings');
+  }
   try {
     const content = buildDigest();
     const result = await sendDiscord(url, content);
